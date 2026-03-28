@@ -197,46 +197,40 @@ class GraficasExport:
 
     @staticmethod
     def crear_figura_seccion(R):
-        """Sección transversal premium — solo losa maciza."""
+        """Sección transversal — escala uniforme real."""
         GraficasExport.setup_style()
-        # Axis ranges
-        x_margin = 4.2   # espacio derecho para cotas
-        y_top    = 1.2   # espacio arriba para etiqueta SUP
-        y_bot    = 2.0   # espacio abajo para etiqueta INF + cota b
-        xlim = (-1.0, b + x_margin)
-        ylim = (-y_bot, h + y_top)
 
-        # figsize proporcional al rango real para que set_aspect('equal') no distorsione
-        x_range = xlim[1] - xlim[0]
-        y_range = ylim[1] - ylim[0]
-        fig_w = 10.0
-        fig_h = fig_w * y_range / x_range
-        fig_h = max(3.0, min(8.0, fig_h))   # clamp sensato
+        # ── Escala uniforme (mismo criterio que el SVG del browser) ──
+        # 1 unidad = 10cm. Losa mínimo 0.8u = 8cm visual, máximo 2.0u = 20cm visual.
+        U_MIN, U_MAX = 0.8, 2.0
+        h_natural = R.h / 10.0          # unidades naturales
+        if h_natural < U_MIN:
+            scale = U_MIN / h_natural    # escalar todo
+        elif h_natural > U_MAX:
+            scale = U_MAX / h_natural
+        else:
+            scale = 1.0
 
-        fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_h))
-        ax.set_aspect('equal')
-        ax.axis('off')
+        b   = 10.0 * scale              # 100cm a escala
+        h   = R.h  / 10.0 * scale      # altura losa a escala
+        rec = 0.30 * scale              # 3cm recubrimiento a escala
 
-        # Scale: 100cm → b=10 drawing units → 1 unit = 10 cm
-        b = 10.0
-        h = R.h / 10.0      # losa height in drawing units (real scale)
-        rec = 0.30           # 3cm cover = 0.30 units
-
-        # Bar radius: real scale but hard-capped so bars never touch each other
-        # Max radius = 40% of the spacing between bars
-        def bar_r(db_mm, sep_u):
-            r_real = (db_mm / 2.0) / 100.0   # mm → drawing units (1 unit = 10cm)
-            r_max  = sep_u * 0.38             # never wider than 38% of spacing
+        # Radios de barras — escala real, sin factor de distorsión
+        # r_mm_to_u: mm → unidades de dibujo (1u=10cm → 1u=100mm)
+        def bar_r(db_mm, sp_u):
+            r_real = (db_mm / 2.0) / 100.0 * scale
+            r_max  = sp_u * 0.42
             return min(r_real, r_max)
 
         db_mi = MALLAS[R.malla_inf]["diametro"]
         db_ms = MALLAS[R.malla_sup]["diametro"]
         db_gi = GRAFILES[R.grafil_inf]["diametro"]
         db_gs = GRAFILES[R.grafil_sup]["diametro"]
-        sep_inf_u = MALLAS[R.malla_inf]["sep"] / 10.0
-        sep_sup_u = MALLAS[R.malla_sup]["sep"] / 10.0
-        n_bars_inf = max(2, min(int(b / max(sep_inf_u, 0.1)), 16))
-        n_bars_sup = max(2, min(int(b / max(sep_sup_u, 0.1)), 16))
+
+        sep_inf_u = MALLAS[R.malla_inf]["sep"] / 10.0 * scale
+        sep_sup_u = MALLAS[R.malla_sup]["sep"] / 10.0 * scale
+        n_bars_inf = max(2, min(int(b / max(sep_inf_u, 0.05)), 16))
+        n_bars_sup = max(2, min(int(b / max(sep_sup_u, 0.05)), 16))
         sp_inf = b / (n_bars_inf + 1)
         sp_sup = b / (n_bars_sup + 1)
 
@@ -245,134 +239,107 @@ class GraficasExport:
         r_gi = bar_r(db_gi, sp_inf) if db_gi > 0 else 0
         r_gs = bar_r(db_gs, sp_sup) if db_gs > 0 else 0
 
-        # Concrete block
-        rect = FancyBboxPatch((0, 0), b, h, boxstyle="round,pad=0.04",
-                              linewidth=2.5, edgecolor='#2C3E50', facecolor='#C8CDD8', zorder=1)
-        ax.add_patch(rect)
+        # figsize proporcional al rango de ejes para que set_aspect('equal') no distorsione
+        x_margin, y_top, y_bot = 4.2 * scale, 1.2 * scale, 2.2 * scale
+        xlim = (-1.0 * scale, b + x_margin)
+        ylim = (-y_bot, h + y_top)
+        x_range = xlim[1] - xlim[0]
+        y_range = ylim[1] - ylim[0]
+        fig_w = 10.0
+        fig_h = max(2.5, min(8.0, fig_w * y_range / x_range))
 
-        # Hatch — diagonal lines
-        for i in range(int(b * 6)):
-            xi = i * 0.18
+        fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_h))
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        # Concreto
+        rect = FancyBboxPatch((0, 0), b, h, boxstyle="round,pad=0.04",
+                              linewidth=2, edgecolor='#2C3E50', facecolor='#C8CDD8', zorder=1)
+        ax.add_patch(rect)
+        for i in range(int(b * 6 / scale)):
+            xi = i * 0.18 * scale
             ax.plot([xi, min(xi+h, b)], [0, min(h, b-xi)],
                     color='#5A6980', lw=0.15, alpha=0.4, zorder=2)
 
-        # Steel guide lines
-        ax.plot([0.2, b-0.2], [rec, rec], color='#3B82F6', lw=0.6, ls='--', alpha=0.4, zorder=3)
-        ax.plot([0.2, b-0.2], [h-rec, h-rec], color='#EF4444', lw=0.6, ls='--', alpha=0.4, zorder=3)
+        # Líneas guía
+        ax.plot([0.2*scale, b-0.2*scale], [rec, rec],      color='#3B82F6', lw=0.5, ls='--', alpha=0.3, zorder=3)
+        ax.plot([0.2*scale, b-0.2*scale], [h-rec, h-rec],  color='#EF4444', lw=0.5, ls='--', alpha=0.3, zorder=3)
 
-        # Bar radii
-        bar_sc = 0.035
-        db_mi = MALLAS[R.malla_inf]["diametro"]
-        db_ms = MALLAS[R.malla_sup]["diametro"]
-        db_gi = GRAFILES[R.grafil_inf]["diametro"]
-        db_gs = GRAFILES[R.grafil_sup]["diametro"]
-        r_mi = db_mi * bar_sc
-        r_ms = db_ms * bar_sc
-        r_gi = db_gi * bar_sc if db_gi > 0 else 0
-        r_gs = db_gs * bar_sc if db_gs > 0 else 0
-
-        # Concrete
-        rect = FancyBboxPatch((0, 0), b, h, boxstyle="round,pad=0.04",
-                               linewidth=2.5, edgecolor='#2C3E50', facecolor='#C8CDD8', zorder=1)
-        ax.add_patch(rect)
-
-        # Hatch
-        for i in range(int(b * 6)):
-            xi = i * 0.18
-            ax.plot([xi, min(xi+h, b)], [0, min(h, b-xi)],
-                    color='#5A6980', lw=0.15, alpha=0.4, zorder=2)
-
-        # Guide lines
-        ax.plot([0.2, b-0.2], [rec, rec], color='#3B82F6', lw=0.6, ls='--', alpha=0.4, zorder=3)
-        ax.plot([0.2, b-0.2], [h-rec, h-rec], color='#EF4444', lw=0.6, ls='--', alpha=0.4, zorder=3)
-
-        # INF bars
+        # Barras INF (rojo)
         for i in range(n_bars_inf):
             bx = (i+1)*sp_inf
-            c = Circle((bx, rec), r_mi, color='#EF4444', ec='#7F1D1D', lw=1.2, zorder=6)
-            ax.add_patch(c)
+            ax.add_patch(Circle((bx, rec), r_mi, color='#EF4444', ec='#7F1D1D', lw=1.0, zorder=6))
         if r_gi > 0:
             for i in range(n_bars_inf-1):
                 bx = (i+1)*sp_inf + sp_inf/2
-                c = Circle((bx, rec), r_gi, color='#F87171', ec='#7F1D1D', lw=0.9, alpha=0.9, zorder=6)
-                ax.add_patch(c)
+                ax.add_patch(Circle((bx, rec), r_gi, color='#F87171', ec='#7F1D1D', lw=0.8, alpha=0.9, zorder=6))
 
-        # SUP bars
+        # Barras SUP (azul)
         for i in range(n_bars_sup):
             bx = (i+1)*sp_sup
-            c = Circle((bx, h-rec), r_ms, color='#3B82F6', ec='#1E3A5F', lw=1.2, zorder=6)
-            ax.add_patch(c)
+            ax.add_patch(Circle((bx, h-rec), r_ms, color='#3B82F6', ec='#1E3A5F', lw=1.0, zorder=6))
         if r_gs > 0:
             for i in range(n_bars_sup-1):
                 bx = (i+1)*sp_sup + sp_sup/2
-                c = Circle((bx, h-rec), r_gs, color='#60A5FA', ec='#1E3A5F', lw=0.9, alpha=0.9, zorder=6)
-                ax.add_patch(c)
+                ax.add_patch(Circle((bx, h-rec), r_gs, color='#60A5FA', ec='#1E3A5F', lw=0.8, alpha=0.9, zorder=6))
 
-        # Recubrimiento indicator
-        ax.annotate('', xy=(0.3, rec), xytext=(0.3, 0),
-                    arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=1.0))
-        ax.text(0.55, rec/2, f'r={int(rec*10)} cm', fontsize=7.5, color=C_DIM, va='center')
+        # Recubrimiento
+        ax.annotate('', xy=(0.25*scale, rec), xytext=(0.25*scale, 0),
+                    arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=0.9))
+        ax.text(0.45*scale, rec/2, f'r={int(rec/scale*10):.0f}cm', fontsize=7, color=C_DIM, va='center')
 
-        # Dims
+        # Cotas
         def dim_h(x1, x2, y, label):
-            ax.annotate('', xy=(x2,y), xytext=(x1,y),
-                        arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=1.0))
-            for xi in [x1, x2]:
-                ax.plot([xi,xi],[y-0.12,y+0.12], color=C_DIM, lw=0.8)
-            ax.text((x1+x2)/2, y-0.3, label, ha='center', va='top', fontsize=8.5,
-                    color=C_DIM, fontweight='bold')
+            ax.annotate('', xy=(x2,y), xytext=(x1,y), arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=0.9))
+            for xi in [x1, x2]: ax.plot([xi,xi],[y-0.1*scale,y+0.1*scale], color=C_DIM, lw=0.7)
+            ax.text((x1+x2)/2, y-0.25*scale, label, ha='center', va='top', fontsize=8, color=C_DIM, fontweight='bold')
 
         def dim_v(x, y1, y2, label):
-            ax.annotate('', xy=(x,y2), xytext=(x,y1),
-                        arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=1.0))
-            for yi in [y1, y2]:
-                ax.plot([x-0.12,x+0.12],[yi,yi], color=C_DIM, lw=0.8)
-            ax.text(x+0.22, (y1+y2)/2, label, ha='left', va='center', fontsize=8.5,
-                    color=C_DIM, fontweight='bold')
+            ax.annotate('', xy=(x,y2), xytext=(x,y1), arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=0.9))
+            for yi in [y1, y2]: ax.plot([x-0.1*scale,x+0.1*scale],[yi,yi], color=C_DIM, lw=0.7)
+            ax.text(x+0.18*scale, (y1+y2)/2, label, ha='left', va='center', fontsize=8, color=C_DIM, fontweight='bold')
 
-        dim_v(b+0.7, 0, h, f'h = {R.h:.0f} cm')
-        dim_v(b+2.1, 0, h-rec, f'd = {R.d:.0f} cm')
-        dim_h(0, b, -1.35, 'b = 100 cm (franja unitaria)')
+        dim_v(b+0.7*scale, 0, h,     f'h = {R.h:.0f} cm')
+        dim_v(b+2.1*scale, 0, h-rec, f'd = {R.d:.0f} cm')
+        dim_h(0, b, -1.3*scale, 'b = 100 cm (franja unitaria)')
 
-        # Labels con fondo de color
+        # Etiquetas con fondo
         lbl_sup = GraficasExport._rebar_label(R.malla_sup, R.grafil_sup)
         lbl_inf = GraficasExport._rebar_label(R.malla_inf, R.grafil_inf)
-
-        ax.text(b/2, h+0.55, f'SUPERIOR: {lbl_sup}', ha='center', fontsize=9.5,
+        ax.text(b/2, h+0.55*scale, f'SUPERIOR: {lbl_sup}', ha='center', fontsize=8.5,
                 color='#1E3A8A', fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.35', facecolor='#EFF6FF', edgecolor='#3B82F6', alpha=0.95))
-        ax.text(b/2, -0.72, f'INFERIOR: {lbl_inf}', ha='center', fontsize=9.5,
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#EFF6FF', edgecolor='#3B82F6', alpha=0.95))
+        ax.text(b/2, -0.65*scale, f'INFERIOR: {lbl_inf}', ha='center', fontsize=8.5,
                 color='#7F1D1D', fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.35', facecolor='#FEF2F2', edgecolor='#EF4444', alpha=0.95))
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#FEF2F2', edgecolor='#EF4444', alpha=0.95))
 
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
         ax.set_title('SECCIÓN TRANSVERSAL Y ARMADO — Losa Maciza en 1 Dirección',
-                     fontsize=11, fontweight='bold', color=C_PRIMARY, pad=12)
+                     fontsize=11, fontweight='bold', color=C_PRIMARY, pad=10)
 
-        # Legend — fuera del dibujo, arriba a la izquierda sin tapar nada
+        # Leyenda — debajo de las etiquetas, fuera del dibujo
         legend_elements = [
             mpatches.Patch(facecolor='#EF4444', edgecolor='#7F1D1D',
-                           label=f'Acero INF: {R.malla_inf} — Ø{db_mi:.2f}mm c/{MALLAS[R.malla_inf]["sep"]}cm'),
+                           label=f'INF: {R.malla_inf} — Ø{db_mi:.2f}mm c/{MALLAS[R.malla_inf]["sep"]}cm'),
             mpatches.Patch(facecolor='#3B82F6', edgecolor='#1E3A5F',
-                           label=f'Acero SUP: {R.malla_sup} — Ø{db_ms:.2f}mm c/{MALLAS[R.malla_sup]["sep"]}cm'),
+                           label=f'SUP: {R.malla_sup} — Ø{db_ms:.2f}mm c/{MALLAS[R.malla_sup]["sep"]}cm'),
             mpatches.Patch(facecolor='#C8CDD8', edgecolor='#2C3E50',
                            label=f"Concreto f'c = {R.fc:.0f} MPa"),
         ]
         if r_gi > 0:
             legend_elements.insert(1, mpatches.Patch(facecolor='#F87171', edgecolor='#7F1D1D',
-                                                       label=f'Grafil INF (Ø{db_gi:.1f}mm)'))
+                                                      label=f'Grafil INF Ø{db_gi:.1f}mm'))
         if r_gs > 0:
             legend_elements.insert(-1, mpatches.Patch(facecolor='#60A5FA', edgecolor='#1E3A5F',
-                                                        label=f'Grafil SUP (Ø{db_gs:.1f}mm)'))
-        # Leyenda debajo del dibujo para no tapar nada
-        ax.legend(handles=legend_elements, loc='upper center',
-                  bbox_to_anchor=(0.35, -y_bot*0.55/y_range + 0.02),
-                  bbox_transform=ax.transAxes,
-                  ncol=1, fontsize=7.5, framealpha=0.92, edgecolor='#CBD5E1')
+                                                       label=f'Grafil SUP Ø{db_gs:.1f}mm'))
+        ax.legend(handles=legend_elements, loc='upper left', fontsize=7.5,
+                  framealpha=0.92, edgecolor='#CBD5E1',
+                  bbox_to_anchor=(0, -0.04), bbox_transform=ax.transAxes, ncol=2)
 
-        fig.tight_layout(pad=1.5)
+        fig.tight_layout(pad=1.2)
         return fig
+
 
 
 class MemoriaWord:

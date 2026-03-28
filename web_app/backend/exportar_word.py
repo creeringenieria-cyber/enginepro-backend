@@ -199,7 +199,21 @@ class GraficasExport:
     def crear_figura_seccion(R):
         """Sección transversal premium — solo losa maciza."""
         GraficasExport.setup_style()
-        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+        # Axis ranges
+        x_margin = 4.2   # espacio derecho para cotas
+        y_top    = 1.2   # espacio arriba para etiqueta SUP
+        y_bot    = 2.0   # espacio abajo para etiqueta INF + cota b
+        xlim = (-1.0, b + x_margin)
+        ylim = (-y_bot, h + y_top)
+
+        # figsize proporcional al rango real para que set_aspect('equal') no distorsione
+        x_range = xlim[1] - xlim[0]
+        y_range = ylim[1] - ylim[0]
+        fig_w = 10.0
+        fig_h = fig_w * y_range / x_range
+        fig_h = max(3.0, min(8.0, fig_h))   # clamp sensato
+
+        fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_h))
         ax.set_aspect('equal')
         ax.axis('off')
 
@@ -331,12 +345,12 @@ class GraficasExport:
                 color='#7F1D1D', fontweight='bold',
                 bbox=dict(boxstyle='round,pad=0.35', facecolor='#FEF2F2', edgecolor='#EF4444', alpha=0.95))
 
-        ax.set_xlim(-1.0, b+3.8)
-        ax.set_ylim(-2.5, h+1.4)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
         ax.set_title('SECCIÓN TRANSVERSAL Y ARMADO — Losa Maciza en 1 Dirección',
                      fontsize=11, fontweight='bold', color=C_PRIMARY, pad=12)
 
-        # Legend
+        # Legend — fuera del dibujo, arriba a la izquierda sin tapar nada
         legend_elements = [
             mpatches.Patch(facecolor='#EF4444', edgecolor='#7F1D1D',
                            label=f'Acero INF: {R.malla_inf} — Ø{db_mi:.2f}mm c/{MALLAS[R.malla_inf]["sep"]}cm'),
@@ -351,8 +365,11 @@ class GraficasExport:
         if r_gs > 0:
             legend_elements.insert(-1, mpatches.Patch(facecolor='#60A5FA', edgecolor='#1E3A5F',
                                                         label=f'Grafil SUP (Ø{db_gs:.1f}mm)'))
-        ax.legend(handles=legend_elements, loc='upper left', fontsize=8, framealpha=0.92,
-                  edgecolor='#CBD5E1', bbox_to_anchor=(0, 0.98))
+        # Leyenda debajo del dibujo para no tapar nada
+        ax.legend(handles=legend_elements, loc='upper center',
+                  bbox_to_anchor=(0.35, -y_bot*0.55/y_range + 0.02),
+                  bbox_transform=ax.transAxes,
+                  ncol=1, fontsize=7.5, framealpha=0.92, edgecolor='#CBD5E1')
 
         fig.tight_layout(pad=1.5)
         return fig

@@ -283,32 +283,114 @@ function renderDeflectionChart(R) {
 /* ─── SECTION SVG ─── */
 function renderSectionSVG(R) {
     const container = document.getElementById('section-svg');
-    const W=580, H=380;
-    // Drawing scale: b_draw px = 100 cm → px_per_cm
-    // h_draw is proportional to real h
-    const b_draw=260;
-    const px_per_cm = b_draw / 100;            // px por cm
-    const px_per_mm = px_per_cm / 10;          // px por mm
-    const h_draw = Math.round(R.h * px_per_cm); // altura REAL a escala
-    // Clamp for extreme cases (very thin or very thick)
-    const h_draw_clamped = Math.max(50, Math.min(200, h_draw));
-    const scale_factor = h_draw_clamped / h_draw; // si se clampeó, ajustar barras también
-    const x0=75, y0=70, rec=Math.round(3*px_per_cm); // recubrimiento 3cm a escala
+
+    /* ── Escala uniforme ──────────────────────────────────────
+       Regla: la losa siempre se dibuja con mínimo 80px de alto.
+       Si h_cm * px_per_cm < 80 → aumentamos px_per_cm para todo.
+       Así barras, recubrimiento y losa escalan JUNTOS sin distorsión.
+    ─────────────────────────────────────────────────────────── */
+    const H_MIN = 80;   // px mínimo de altura de losa
+    const H_MAX = 200;  // px máximo
+    const B_BASE = 260; // ancho base (100cm)
+
+    let px_per_cm = B_BASE / 100;               // 2.6 px/cm base
+    const h_natural = R.h * px_per_cm;
+    if (h_natural < H_MIN) px_per_cm = H_MIN / R.h;
+    if (h_natural > H_MAX) px_per_cm = H_MAX / R.h;
+
+    const px_per_mm = px_per_cm / 10;
+    const b_draw = 100 * px_per_cm;             // siempre 100cm a escala
+    const hd     = R.h  * px_per_cm;            // altura losa a escala
+    const rec    = 3    * px_per_cm;            // 3cm recubrimiento a escala
+
+    // SVG viewport — margen izquierdo + b_draw + cotas derecha + padding
+    const x0 = 75, y0 = 70;
+    const W = Math.round(x0 + b_draw + 90);
+    const H = Math.round(y0 + hd + 80);
+
     const colSup='#3B82F6', colSupDk='#1D4ED8', colInf='#EF4444', colInfDk='#B91C1C';
     const colDim='#64748B', colBg='#161928', colConc='#C8CDD8', colEdge='#3D4A5C';
 
-    const sep_inf_px = (R.sep_malla_inf||15)*px_per_cm;
-    const sep_sup_px = (R.sep_malla_sup||15)*px_per_cm;
-    const nInf = Math.max(2, Math.min(Math.floor(b_draw/Math.max(sep_inf_px,4)), 20));
-    const nSup = Math.max(2, Math.min(Math.floor(b_draw/Math.max(sep_sup_px,4)), 20));
-    const spInfPx = b_draw/(nInf+1);
-    const spSupPx = b_draw/(nSup+1);
-    const barR = (db_mm, sp_px) => Math.min((db_mm/2)*px_per_mm*scale_factor, sp_px*0.38);
-    const rMI = barR(R.db_malla_inf||5, spInfPx);
-    const rMS = barR(R.db_malla_sup||4, spSupPx);
-    const rGI = R.db_grafil_inf>0 ? barR(R.db_grafil_inf, spInfPx*0.5) : 0;
-    const rGS = R.db_grafil_sup>0 ? barR(R.db_grafil_sup, spSupPx*0.5) : 0;
-    const hd = h_draw_clamped;
+    /* Número de barras según separación real */
+    const sep_inf_px = (R.sep_malla_inf||15) * px_per_cm;
+    const sep_sup_px = (R.sep_malla_sup||15) * px_per_cm;
+    const nInf = Math.max(2, Math.min(Math.floor(b_draw / Math.max(sep_inf_px, 3)), 20));
+    const nSup = Math.max(2, Math.min(Math.floor(b_draw / Math.max(sep_sup_px, 3)), 20));
+    const spInfPx = b_draw / (nInf + 1);
+    const spSupPx = b_draw / (nSup + 1);
+
+    /* Radio: escala real, sin ningún scale_factor
+       Cap: 42% del espaciamiento para que no se toquen */
+    const barR = (db_mm, sp_px) => Math.min((db_mm / 2) * px_per_mm, sp_px * 0.42);
+    const rMI = barR(R.db_malla_inf||5,  spInfPx);
+    const rMS = barR(R.db_malla_sup||4,  spSupPx);
+    const rGI = R.db_grafil_inf > 0 ? barR(R.db_grafil_inf, spInfPx * 0.5) : 0;
+    const rGS = R.db_grafil_sup > 0 ? barR(R.db_grafil_sup, spSupPx * 0.5) : 0;
+
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
+        xmlns="http://www.w3.org/2000/svg"
+        style="max-width:100%;height:auto;background:${colBg};border-radius:8px">
+    <defs>
+      <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="8" stroke="${colEdge}" stroke-width="0.4" opacity="0.5"/>
+      </pattern>
+      <filter id="gs"><feGaussianBlur stdDeviation="1.5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="gi"><feGaussianBlur stdDeviation="1.5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>`;
+
+    // Concreto
+    svg += `<rect x="${x0}" y="${y0}" width="${b_draw}" height="${hd}" fill="${colConc}" rx="2"/>`;
+    svg += `<rect x="${x0}" y="${y0}" width="${b_draw}" height="${hd}" fill="url(#hatch)" opacity="0.55"/>`;
+    svg += `<rect x="${x0}" y="${y0}" width="${b_draw}" height="${hd}" fill="none" stroke="${colEdge}" stroke-width="2" rx="2"/>`;
+
+    // Recubrimiento
+    svg += `<line x1="${x0+4}" y1="${y0}" x2="${x0+4}" y2="${y0+rec}" stroke="${colDim}" stroke-width="0.8" stroke-dasharray="3,2"/>`;
+    svg += `<line x1="${x0+4}" y1="${y0+hd}" x2="${x0+4}" y2="${y0+hd-rec}" stroke="${colDim}" stroke-width="0.8" stroke-dasharray="3,2"/>`;
+    svg += `<text x="${x0+8}" y="${y0+hd-rec/2+3}" fill="${colDim}" font-size="8.5" font-family="Inter,sans-serif">r=3cm</text>`;
+
+    // Líneas guía
+    svg += `<line x1="${x0+6}" y1="${y0+rec}" x2="${x0+b_draw-6}" y2="${y0+rec}" stroke="${colSup}" stroke-width="0.5" stroke-dasharray="4,3" opacity="0.2"/>`;
+    svg += `<line x1="${x0+6}" y1="${y0+hd-rec}" x2="${x0+b_draw-6}" y2="${y0+hd-rec}" stroke="${colInf}" stroke-width="0.5" stroke-dasharray="4,3" opacity="0.2"/>`;
+
+    // Barras INF
+    for (let i=0; i<nInf; i++) {
+        const bx = x0+(i+1)*spInfPx, by = y0+hd-rec;
+        svg += `<circle cx="${bx}" cy="${by}" r="${rMI}" fill="${colInf}" stroke="${colInfDk}" stroke-width="1" filter="url(#gi)"/>`;
+    }
+    if (rGI > 0) for (let i=0; i<nInf-1; i++) {
+        const bx = x0+(i+1)*spInfPx+spInfPx/2, by = y0+hd-rec;
+        if (bx < x0+b_draw-rGI) svg += `<circle cx="${bx}" cy="${by}" r="${rGI}" fill="${colInf}" stroke="${colInfDk}" stroke-width="0.8" opacity="0.8"/>`;
+    }
+
+    // Barras SUP
+    for (let i=0; i<nSup; i++) {
+        const bx = x0+(i+1)*spSupPx, by = y0+rec;
+        svg += `<circle cx="${bx}" cy="${by}" r="${rMS}" fill="${colSup}" stroke="${colSupDk}" stroke-width="1" filter="url(#gs)"/>`;
+    }
+    if (rGS > 0) for (let i=0; i<nSup-1; i++) {
+        const bx = x0+(i+1)*spSupPx+spSupPx/2, by = y0+rec;
+        if (bx < x0+b_draw-rGS) svg += `<circle cx="${bx}" cy="${by}" r="${rGS}" fill="${colSup}" stroke="${colSupDk}" stroke-width="0.8" opacity="0.8"/>`;
+    }
+
+    // Cotas
+    svg += dimV(x0+b_draw+22, y0, y0+hd,     `h=${R.h}cm`, colDim);
+    svg += dimV(x0+b_draw+52, y0, y0+hd-rec, `d=${R.d}cm`, colDim);
+    svg += dimH(x0, x0+b_draw, y0+hd+42, 'b=100cm', colDim);
+
+    // Etiquetas
+    const lblSup = rebarLabel(R.malla_sup, R.grafil_sup);
+    const lblInf = rebarLabel(R.malla_inf, R.grafil_inf);
+    const pw = Math.min(lblSup.length*6.2+20, b_draw);
+    svg += `<rect x="${x0+(b_draw-pw)/2}" y="${y0-30}" width="${pw}" height="18" fill="rgba(59,130,246,0.12)" stroke="rgba(59,130,246,0.4)" stroke-width="1" rx="4"/>`;
+    svg += `<text x="${x0+b_draw/2}" y="${y0-17}" fill="${colSup}" font-size="9" font-weight="700" font-family="Inter,sans-serif" text-anchor="middle">SUP: ${lblSup}</text>`;
+    const iw = Math.min(lblInf.length*6.2+20, b_draw);
+    svg += `<rect x="${x0+(b_draw-iw)/2}" y="${y0+hd+14}" width="${iw}" height="18" fill="rgba(239,68,68,0.12)" stroke="rgba(239,68,68,0.4)" stroke-width="1" rx="4"/>`;
+    svg += `<text x="${x0+b_draw/2}" y="${y0+hd+27}" fill="${colInf}" font-size="9" font-weight="700" font-family="Inter,sans-serif" text-anchor="middle">INF: ${lblInf}</text>`;
+    svg += '</svg>';
+    container.innerHTML = svg;
+}
 
     let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
         style="max-width:100%;height:auto;background:${colBg};border-radius:8px">

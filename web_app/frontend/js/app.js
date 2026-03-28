@@ -297,22 +297,12 @@ function renderSectionSVG(R) {
     const colSup='#3B82F6', colSupDk='#1D4ED8', colInf='#EF4444', colInfDk='#B91C1C';
     const colDim='#64748B', colBg='#161928', colConc='#C8CDD8', colEdge='#3D4A5C';
 
-    // Radio de barra en px = (diámetro en mm / 2) * px_per_mm * scale_factor
-    // Clamp: máximo 45% del recubrimiento visual para que no se superpongan con concreto
-    const barR = (db_mm) => Math.min((db_mm/2)*px_per_mm*scale_factor, rec*0.85);
-    const rMI = barR(R.db_malla_inf||5);
-    const rMS = barR(R.db_malla_sup||4);
-    const rGI = R.db_grafil_inf>0 ? barR(R.db_grafil_inf) : 0;
-    const rGS = R.db_grafil_sup>0 ? barR(R.db_grafil_sup) : 0;
-
-    // Número de barras: real según separación, máximo lo que cabe en b_draw
     const sep_inf_px = (R.sep_malla_inf||15)*px_per_cm;
     const sep_sup_px = (R.sep_malla_sup||15)*px_per_cm;
     const nInf = Math.max(2, Math.min(Math.floor(b_draw/Math.max(sep_inf_px,4)), 20));
     const nSup = Math.max(2, Math.min(Math.floor(b_draw/Math.max(sep_sup_px,4)), 20));
     const spInfPx = b_draw/(nInf+1);
     const spSupPx = b_draw/(nSup+1);
-    // Radio: escala real pero nunca más del 38% del espaciamiento → barras no se tocan
     const barR = (db_mm, sp_px) => Math.min((db_mm/2)*px_per_mm*scale_factor, sp_px*0.38);
     const rMI = barR(R.db_malla_inf||5, spInfPx);
     const rMS = barR(R.db_malla_sup||4, spSupPx);

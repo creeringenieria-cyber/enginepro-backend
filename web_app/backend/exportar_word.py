@@ -230,7 +230,8 @@ class GraficasExport:
         n_bars_sup = max(2, min(int(b / max(sep_sup_u, r_ms*2+0.05)), 16))
         sp_inf = b / (n_bars_inf + 1)
         sp_sup = b / (n_bars_sup + 1)
-                               linewidth=2.5, edgecolor='#2C3E50', facecolor='#C8CDD8', zorder=1)
+        rect = patches.Rectangle((0, 0), b, h,
+                                 linewidth=2.5, edgecolor='#2C3E50', facecolor='#C8CDD8', zorder=1)
         ax.add_patch(rect)
 
         # Hatch — diagonal lines

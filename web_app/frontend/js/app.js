@@ -260,6 +260,9 @@ function renderShearChart(R) {
         {x:[R.x_global[0],R.x_global[R.x_global.length-1]],y:[R.phi_vc*sc,R.phi_vc*sc],
          name:`φVc=${fmt2(R.phi_vc)} ${unitF()}`,line:{color:'#F59E0B',width:1.5,dash:'dashdot'},
          hovertemplate:`φVc=${fmt2(R.phi_vc)} ${unitF()}<extra></extra>`},
+        {x:[R.x_global[0],R.x_global[R.x_global.length-1]],y:[-R.phi_vc*sc,-R.phi_vc*sc],
+         name:`-φVc`,line:{color:'#F59E0B',width:1.5,dash:'dashdot'},showlegend:false,
+         hovertemplate:`-φVc=${fmt2(-R.phi_vc)} ${unitF()}<extra></extra>`},
     ],{...PLY_LAYOUT,yaxis:{...PLY_LAYOUT.yaxis,title:{text:`Vu (${unitF()})`,font:{size:10.5}}},
        shapes:suppShapes(R)},PLY_CFG);
 }

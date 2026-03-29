@@ -252,19 +252,34 @@ function renderMomentChart(R) {
 
 function renderShearChart(R) {
     const sc = unidades==='KGF'?101.972:1;
+    const x0 = R.x_global[0];
+    const x1 = R.x_global[R.x_global.length-1];
+    const vcVal = R.phi_vc * sc;
+    const phiShapes = [
+        ...suppShapes(R),
+        {type:'line', x0, x1, y0: vcVal,  y1: vcVal,
+         xref:'x', yref:'y',
+         line:{color:'#F59E0B', width:2, dash:'dashdot'}},
+        {type:'line', x0, x1, y0:-vcVal,  y1:-vcVal,
+         xref:'x', yref:'y',
+         line:{color:'#F59E0B', width:2, dash:'dashdot'}},
+    ];
     Plotly.newPlot('chart-shear',[
-        {x:R.x_global,y:R.V_env_max.map(v=>v*sc),name:'V máx',line:{color:'#22C55E',width:2.5},
-         fill:'tozeroy',fillcolor:'rgba(34,197,94,0.08)',hovertemplate:`V⁺=<b>%{y:.2f}</b> ${unitF()}<extra></extra>`},
-        {x:R.x_global,y:R.V_env_min.map(v=>v*sc),name:'V mín',line:{color:'#22C55E',width:2,dash:'dash'},
-         fill:'tozeroy',fillcolor:'rgba(34,197,94,0.05)',hovertemplate:`V⁻=<b>%{y:.2f}</b> ${unitF()}<extra></extra>`},
-        {x:[R.x_global[0],R.x_global[R.x_global.length-1]],y:[R.phi_vc*sc,R.phi_vc*sc],
-         name:`φVc=${fmt2(R.phi_vc)} ${unitF()}`,line:{color:'#F59E0B',width:1.5,dash:'dashdot'},
-         hovertemplate:`φVc=${fmt2(R.phi_vc)} ${unitF()}<extra></extra>`},
-        {x:[R.x_global[0],R.x_global[R.x_global.length-1]],y:[-R.phi_vc*sc,-R.phi_vc*sc],
-         name:`-φVc`,line:{color:'#F59E0B',width:1.5,dash:'dashdot'},showlegend:false,
-         hovertemplate:`-φVc=${fmt2(-R.phi_vc)} ${unitF()}<extra></extra>`},
-    ],{...PLY_LAYOUT,yaxis:{...PLY_LAYOUT.yaxis,title:{text:`Vu (${unitF()})`,font:{size:10.5}}},
-       shapes:suppShapes(R)},PLY_CFG);
+        {x:R.x_global, y:R.V_env_max.map(v=>v*sc), name:'V máx',
+         line:{color:'#22C55E',width:2.5},
+         fill:'tozeroy', fillcolor:'rgba(34,197,94,0.08)',
+         hovertemplate:`V⁺=<b>%{y:.2f}</b> ${unitF()}<extra></extra>`},
+        {x:R.x_global, y:R.V_env_min.map(v=>v*sc), name:'V mín',
+         line:{color:'#22C55E',width:2,dash:'dash'},
+         hovertemplate:`V⁻=<b>%{y:.2f}</b> ${unitF()}<extra></extra>`},
+        // Traza fantasma solo para que aparezca en la leyenda
+        {x:[null], y:[null], name:`±φVc=${fmt2(R.phi_vc)} ${unitF()}`,
+         line:{color:'#F59E0B',width:2,dash:'dashdot'},
+         hoverinfo:'skip'},
+    ],{...PLY_LAYOUT,
+       yaxis:{...PLY_LAYOUT.yaxis, title:{text:`Vu (${unitF()})`,font:{size:10.5}}},
+       shapes: phiShapes},
+    PLY_CFG);
 }
 
 function renderDeflectionChart(R) {

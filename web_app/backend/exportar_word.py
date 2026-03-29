@@ -87,8 +87,6 @@ class GraficasExport:
     @staticmethod
     def crear_figura_principal(R):
         GraficasExport.setup_style()
-        _old_limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(_old_limit, 15000))
         fig = plt.figure(figsize=(11, 15))
         gs_main = gridspec.GridSpec(4, 1, height_ratios=[0.75, 1.3, 1.0, 1.05],
                                     hspace=0.48, top=0.96, bottom=0.04, left=0.10, right=0.96)
@@ -250,8 +248,6 @@ class GraficasExport:
         fig_w = 10.0
         fig_h = max(2.5, min(8.0, fig_w * y_range / x_range))
 
-        _old_limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(_old_limit, 15000))
         fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_h))
         ax.set_aspect('equal')
         ax.axis('off')
@@ -744,12 +740,10 @@ class MemoriaWord:
         path_diag = os.path.join(tmpdir, "creer_diag_mem.png")
         path_sec  = os.path.join(tmpdir, "creer_sec_mem.png")
 
-        # Limpiar figuras previas para evitar memory leaks en Render
-        plt.close('all')
-
         try:
             fig_main = GraficasExport.crear_figura_principal(R)
-            fig_main.savefig(path_diag, dpi=220, bbox_inches='tight', facecolor='white')
+            fig_main.tight_layout()
+            fig_main.savefig(path_diag, dpi=220, facecolor='white')
             plt.close(fig_main)
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(path_diag, width=Cm(16.5))
@@ -763,7 +757,8 @@ class MemoriaWord:
 
         try:
             fig_sec = GraficasExport.crear_figura_seccion(R)
-            fig_sec.savefig(path_sec, dpi=220, bbox_inches='tight', facecolor='white')
+            fig_sec.tight_layout()
+            fig_sec.savefig(path_sec, dpi=220, facecolor='white')
             plt.close(fig_sec)
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(path_sec, width=Cm(15))

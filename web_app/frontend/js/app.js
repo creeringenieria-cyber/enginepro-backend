@@ -252,33 +252,51 @@ function renderMomentChart(R) {
 
 function renderShearChart(R) {
     const sc = unidades==='KGF'?101.972:1;
-    const x0 = R.x_global[0];
-    const x1 = R.x_global[R.x_global.length-1];
     const vcVal = R.phi_vc * sc;
-    const phiShapes = [
-        ...suppShapes(R),
-        {type:'line', x0, x1, y0: vcVal,  y1: vcVal,
-         xref:'x', yref:'y',
-         line:{color:'#F59E0B', width:2, dash:'dashdot'}},
-        {type:'line', x0, x1, y0:-vcVal,  y1:-vcVal,
-         xref:'x', yref:'y',
-         line:{color:'#F59E0B', width:2, dash:'dashdot'}},
-    ];
+    const Vmax = R.V_env_max.map(v=>v*sc);
+    const Vmin = R.V_env_min.map(v=>v*sc);
+
+    /* Anotaciones en picos de cortante */
+    const iMax = Vmax.indexOf(Math.max(...Vmax));
+    const iMin = Vmin.indexOf(Math.min(...Vmin));
+    const anns = [];
+    if(Math.abs(Vmax[iMax])>0.01) anns.push({x:R.x_global[iMax],y:Vmax[iMax],
+        text:`<b>${Vmax[iMax].toFixed(2)}</b>`,showarrow:true,arrowhead:2,arrowcolor:'#22C55E',
+        font:{size:10,color:'#22C55E'},bgcolor:'rgba(16,18,28,0.9)',borderpad:3,ay:-28});
+    if(Math.abs(Vmin[iMin])>0.01) anns.push({x:R.x_global[iMin],y:Vmin[iMin],
+        text:`<b>${Vmin[iMin].toFixed(2)}</b>`,showarrow:true,arrowhead:2,arrowcolor:'#22C55E',
+        font:{size:10,color:'#22C55E'},bgcolor:'rgba(16,18,28,0.9)',borderpad:3,ay:28});
+
+    /* φVc como trazas REALES para que Plotly incluya ±φVc en el autorange */
+    const xLim = [R.x_global[0], R.x_global[R.x_global.length-1]];
     Plotly.newPlot('chart-shear',[
-        {x:R.x_global, y:R.V_env_max.map(v=>v*sc), name:'V máx',
+        {x:R.x_global, y:Vmax, name:'V máx',
          line:{color:'#22C55E',width:2.5},
          fill:'tozeroy', fillcolor:'rgba(34,197,94,0.08)',
          hovertemplate:`V⁺=<b>%{y:.2f}</b> ${unitF()}<extra></extra>`},
-        {x:R.x_global, y:R.V_env_min.map(v=>v*sc), name:'V mín',
+        {x:R.x_global, y:Vmin, name:'V mín',
          line:{color:'#22C55E',width:2,dash:'dash'},
+         fill:'tozeroy', fillcolor:'rgba(34,197,94,0.04)',
          hovertemplate:`V⁻=<b>%{y:.2f}</b> ${unitF()}<extra></extra>`},
-        // Traza fantasma solo para que aparezca en la leyenda
-        {x:[null], y:[null], name:`±φVc=${fmt2(R.phi_vc)} ${unitF()}`,
+        /* +φVc — traza real, afecta autorange */
+        {x:xLim, y:[vcVal, vcVal],
+         name:`φVc=${vcVal.toFixed(2)} ${unitF()}`,
+         mode:'lines+markers',
          line:{color:'#F59E0B',width:2,dash:'dashdot'},
-         hoverinfo:'skip'},
+         marker:{symbol:'diamond',size:6,color:'#F59E0B'},
+         hovertemplate:`+φVc=<b>${vcVal.toFixed(2)}</b> ${unitF()}<extra></extra>`},
+        /* −φVc — traza real, afecta autorange */
+        {x:xLim, y:[-vcVal, -vcVal],
+         name:`-φVc=${(-vcVal).toFixed(2)} ${unitF()}`,
+         mode:'lines+markers',
+         line:{color:'#F59E0B',width:2,dash:'dashdot'},
+         marker:{symbol:'diamond',size:6,color:'#F59E0B'},
+         showlegend:false,
+         hovertemplate:`-φVc=<b>${(-vcVal).toFixed(2)}</b> ${unitF()}<extra></extra>`},
     ],{...PLY_LAYOUT,
        yaxis:{...PLY_LAYOUT.yaxis, title:{text:`Vu (${unitF()})`,font:{size:10.5}}},
-       shapes: phiShapes},
+       shapes: suppShapes(R),
+       annotations: anns},
     PLY_CFG);
 }
 
@@ -410,70 +428,6 @@ function renderSectionSVG(R) {
     container.innerHTML = svg;
 }
 
-    let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
-        style="max-width:100%;height:auto;background:${colBg};border-radius:8px">
-    <defs>
-      <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-        <line x1="0" y1="0" x2="0" y2="8" stroke="${colEdge}" stroke-width="0.4" opacity="0.5"/>
-      </pattern>
-      <filter id="gs"><feGaussianBlur stdDeviation="1.8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-      <filter id="gi"><feGaussianBlur stdDeviation="1.8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    </defs>`;
-
-    // Concrete block
-    svg+=`<rect x="${x0}" y="${y0}" width="${b_draw}" height="${hd}" fill="${colConc}" rx="2"/>`;
-    svg+=`<rect x="${x0}" y="${y0}" width="${b_draw}" height="${hd}" fill="url(#hatch)" opacity="0.55"/>`;
-    svg+=`<rect x="${x0}" y="${y0}" width="${b_draw}" height="${hd}" fill="none" stroke="${colEdge}" stroke-width="2.5" rx="2"/>`;
-
-    // Cover indicator
-    svg+=`<line x1="${x0+5}" y1="${y0+hd}" x2="${x0+5}" y2="${y0+hd-rec}" stroke="${colDim}" stroke-width="0.8" stroke-dasharray="3,2"/>`;
-    svg+=`<line x1="${x0+5}" y1="${y0}" x2="${x0+5}" y2="${y0+rec}" stroke="${colDim}" stroke-width="0.8" stroke-dasharray="3,2"/>`;
-    svg+=`<text x="${x0+9}" y="${y0+hd-rec/2+3}" fill="${colDim}" font-size="8.5" font-family="Inter,sans-serif">r=3cm</text>`;
-
-    // Guide lines at bar positions
-    svg+=`<line x1="${x0+8}" y1="${y0+rec}" x2="${x0+b_draw-8}" y2="${y0+rec}" stroke="${colSup}" stroke-width="0.5" stroke-dasharray="4,3" opacity="0.25"/>`;
-    svg+=`<line x1="${x0+8}" y1="${y0+hd-rec}" x2="${x0+b_draw-8}" y2="${y0+hd-rec}" stroke="${colInf}" stroke-width="0.5" stroke-dasharray="4,3" opacity="0.25"/>`;
-
-    // INF bars
-    for(let i=0;i<nInf;i++){
-        const bx=x0+(i+1)*spInfPx, by=y0+hd-rec;
-        svg+=`<circle cx="${bx}" cy="${by}" r="${rMI}" fill="${colInf}" stroke="${colInfDk}" stroke-width="1" filter="url(#gi)"/>`;
-    }
-    if(rGI>0){
-        for(let i=0;i<nInf-1;i++){
-            const bx=x0+(i+1)*spInfPx+spInfPx/2, by=y0+hd-rec;
-            if(bx<x0+b_draw-rGI) svg+=`<circle cx="${bx}" cy="${by}" r="${rGI}" fill="${colInf}" stroke="${colInfDk}" stroke-width="0.8" opacity="0.8"/>`;
-        }
-    }
-    // SUP bars
-    for(let i=0;i<nSup;i++){
-        const bx=x0+(i+1)*spSupPx, by=y0+rec;
-        svg+=`<circle cx="${bx}" cy="${by}" r="${rMS}" fill="${colSup}" stroke="${colSupDk}" stroke-width="1" filter="url(#gs)"/>`;
-    }
-    if(rGS>0){
-        for(let i=0;i<nSup-1;i++){
-            const bx=x0+(i+1)*spSupPx+spSupPx/2, by=y0+rec;
-            if(bx<x0+b_draw-rGS) svg+=`<circle cx="${bx}" cy="${by}" r="${rGS}" fill="${colSup}" stroke="${colSupDk}" stroke-width="0.8" opacity="0.8"/>`;
-        }
-    }
-
-    // Dimensions
-    svg+=dimV(x0+b_draw+22,y0,y0+hd,`h=${R.h}cm`,colDim);
-    svg+=dimV(x0+b_draw+52,y0,y0+hd-rec,`d=${R.d}cm`,colDim);
-    svg+=dimH(x0,x0+b_draw,y0+hd+42,'b=100cm',colDim);
-
-    // Labels
-    const lblSup=rebarLabel(R.malla_sup,R.grafil_sup);
-    const lblInf=rebarLabel(R.malla_inf,R.grafil_inf);
-    const pw=Math.min(lblSup.length*6.2+20,b_draw);
-    svg+=`<rect x="${x0+(b_draw-pw)/2}" y="${y0-30}" width="${pw}" height="18" fill="rgba(59,130,246,0.12)" stroke="rgba(59,130,246,0.4)" stroke-width="1" rx="4"/>`;
-    svg+=`<text x="${x0+b_draw/2}" y="${y0-17}" fill="${colSup}" font-size="9" font-weight="700" font-family="Inter,sans-serif" text-anchor="middle">SUP: ${lblSup}</text>`;
-    const iw=Math.min(lblInf.length*6.2+20,b_draw);
-    svg+=`<rect x="${x0+(b_draw-iw)/2}" y="${y0+hd+14}" width="${iw}" height="18" fill="rgba(239,68,68,0.12)" stroke="rgba(239,68,68,0.4)" stroke-width="1" rx="4"/>`;
-    svg+=`<text x="${x0+b_draw/2}" y="${y0+hd+27}" fill="${colInf}" font-size="9" font-weight="700" font-family="Inter,sans-serif" text-anchor="middle">INF: ${lblInf}</text>`;
-    svg+='</svg>';
-    container.innerHTML = svg;
-}
 function rebarLabel(m,g){let l=m;if(g&&g!=='Sin Grafil')l+=' + '+g;return l;}
 function dimH(x1,x2,y,label,col){const aw=5,ah=3;let s='';
     s+=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" stroke-width="0.9"/>`;

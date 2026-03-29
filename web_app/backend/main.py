@@ -51,6 +51,9 @@ _email_logger.setLevel(logging.DEBUG)
 _fh = logging.FileHandler(os.path.join(_log_dir, "email.log"), encoding="utf-8")
 _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 _email_logger.addHandler(_fh)
+_sh = logging.StreamHandler()   # stdout → visible en Render dashboard logs
+_sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_email_logger.addHandler(_sh)
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
@@ -301,6 +304,14 @@ def get_logo():
     if p:
         return FileResponse(p, media_type="image/png")
     raise HTTPException(status_code=404, detail="Logo not found")
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    fav = os.path.join(FRONTEND_DIR, "favicon.ico")
+    if os.path.exists(fav):
+        return FileResponse(fav, media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="favicon not found")
 
 
 @app.get("/robots.txt")

@@ -7,9 +7,6 @@ import re
 import tempfile
 import datetime
 import logging
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,14 +33,9 @@ app.add_middleware(
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 
-# ─── Email config — usar variables de entorno en producción ───
-SMTP_HOST = os.getenv("SMTP_HOST", "mail.creeringenieria.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "info@creeringenieria.com")
-SMTP_PASS = os.getenv("SMTP_PASS", "")          # Set in Render env vars
 ADMIN_EMAIL = "info@creeringenieria.com"
 
-# ─── Logger para emails ───
+# ─── Logger ───
 _log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 os.makedirs(_log_dir, exist_ok=True)
 _email_logger = logging.getLogger("enginepro.email")
@@ -51,7 +43,7 @@ _email_logger.setLevel(logging.DEBUG)
 _fh = logging.FileHandler(os.path.join(_log_dir, "email.log"), encoding="utf-8")
 _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 _email_logger.addHandler(_fh)
-_sh = logging.StreamHandler()   # stdout → visible en Render dashboard logs
+_sh = logging.StreamHandler()
 _sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 _email_logger.addHandler(_sh)
 
@@ -101,49 +93,39 @@ class RegistroDescarga(BaseModel):
     entrada: DatosEntrada
 
 
-# ─── Email helper ───
+# ─── HTML sanitizer ───
 def _sanitize_html(s: str) -> str:
-    """Escapa caracteres HTML para evitar inyecciones en el correo."""
     return (s.replace("&", "&amp;").replace("<", "&lt;")
              .replace(">", "&gt;").replace('"', "&quot;"))
 
 
+# ─── Email con Resend ───
 def enviar_email_registro(reg: RegistroDescarga):
-    """Envía correo al admin con los datos del usuario que descargó."""
-    # Validación estricta
-    if not reg.nombre or not reg.nombre.strip():
-        _email_logger.warning("Registro rechazado: nombre vacío")
-        return
-    if not reg.correo or not _EMAIL_RE.match(reg.correo.strip()):
-        _email_logger.warning(f"Registro rechazado: correo inválido '{reg.correo}'")
-        return
-    if not reg.empresa or not reg.empresa.strip():
-        _email_logger.warning("Registro rechazado: empresa vacía")
-        return
+    """Envía correo al admin con los datos del usuario que descargó (vía Resend HTTP API)."""
+    import resend
 
-    if not SMTP_PASS:
-        _email_logger.warning(
-            f"SMTP_PASS no configurado — registro NO enviado. "
-            f"Datos: {reg.nombre} / {reg.correo} / {reg.empresa}"
-        )
-        return
+    if not reg.nombre or not reg.nombre.strip():
+        _email_logger.warning("Registro rechazado: nombre vacío"); return
+    if not reg.correo or not _EMAIL_RE.match(reg.correo.strip()):
+        _email_logger.warning(f"Registro rechazado: correo inválido '{reg.correo}'"); return
+    if not reg.empresa or not reg.empresa.strip():
+        _email_logger.warning("Registro rechazado: empresa vacía"); return
+
+    RESEND_KEY = os.getenv("RESEND_API_KEY", "")
+    if not RESEND_KEY:
+        _email_logger.warning("RESEND_API_KEY no configurado — registro NO enviado."); return
+
+    resend.api_key = RESEND_KEY
 
     try:
-        fecha_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-        luces_str = " + ".join([f"{L:.2f}m" for L in reg.entrada.luces])
-
-        # Sanitizar inputs contra inyección HTML
-        s_nombre = _sanitize_html(reg.nombre.strip())
-        s_empresa = _sanitize_html(reg.empresa.strip())
-        s_correo = _sanitize_html(reg.correo.strip())
-        s_pais = _sanitize_html(reg.pais.strip() if reg.pais else "—")
-        s_proyecto = _sanitize_html(reg.proyecto.strip()) if reg.proyecto else "—"
+        fecha_hora  = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        luces_str   = " + ".join([f"{L:.2f}m" for L in reg.entrada.luces])
+        s_nombre    = _sanitize_html(reg.nombre.strip())
+        s_empresa   = _sanitize_html(reg.empresa.strip())
+        s_correo    = _sanitize_html(reg.correo.strip())
+        s_pais      = _sanitize_html(reg.pais.strip() if reg.pais else "—")
+        s_proyecto  = _sanitize_html(reg.proyecto.strip()) if reg.proyecto else "—"
         s_matricula = _sanitize_html(reg.matricula.strip()) if reg.matricula else "—"
-
-        msg_admin = MIMEMultipart("alternative")
-        msg_admin["From"] = SMTP_USER
-        msg_admin["To"] = ADMIN_EMAIL
-        msg_admin["Subject"] = f"[EnginePro] Nueva descarga — {s_nombre} · {fecha_hora}"
 
         html_admin = f"""
         <html><body style="font-family:Arial,sans-serif;background:#f4f4f8;padding:20px">
@@ -157,12 +139,12 @@ def enviar_email_registro(reg: RegistroDescarga):
                     <tr><td style="color:#555;padding:6px 0;width:140px"><b>Nombre:</b></td><td style="color:#1A1A2E">{s_nombre}</td></tr>
                     <tr><td style="color:#555;padding:6px 0"><b>Empresa:</b></td><td style="color:#1A1A2E">{s_empresa}</td></tr>
                     <tr><td style="color:#555;padding:6px 0"><b>Correo:</b></td><td><a href="mailto:{reg.correo.strip()}" style="color:#E03030">{s_correo}</a></td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>Pais:</b></td><td style="color:#1A1A2E">{s_pais}</td></tr>
+                    <tr><td style="color:#555;padding:6px 0"><b>País:</b></td><td style="color:#1A1A2E">{s_pais}</td></tr>
                     <tr><td style="color:#555;padding:6px 0"><b>Proyecto:</b></td><td style="color:#1A1A2E">{s_proyecto}</td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>Matricula:</b></td><td style="color:#1A1A2E">{s_matricula}</td></tr>
+                    <tr><td style="color:#555;padding:6px 0"><b>Matrícula:</b></td><td style="color:#1A1A2E">{s_matricula}</td></tr>
                 </table>
                 <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-                <h3 style="color:#1A1A2E;font-size:0.95rem;margin:0 0 10px">Parametros calculados</h3>
+                <h3 style="color:#1A1A2E;font-size:0.95rem;margin:0 0 10px">Parámetros calculados</h3>
                 <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
                     <tr><td style="color:#555;padding:4px 0;width:140px">Luces:</td><td style="font-family:monospace">{luces_str}</td></tr>
                     <tr><td style="color:#555;padding:4px 0">h / f'c / fy:</td><td style="font-family:monospace">{reg.entrada.h} cm / {reg.entrada.fc} MPa / {reg.entrada.fy} MPa</td></tr>
@@ -176,27 +158,17 @@ def enviar_email_registro(reg: RegistroDescarga):
         </div>
         </body></html>
         """
-        msg_admin.attach(MIMEText(html_admin, "html"))
 
-        if SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-                server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_USER, ADMIN_EMAIL, msg_admin.as_string())
-        else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-                server.starttls()
-                server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_USER, ADMIN_EMAIL, msg_admin.as_string())
+        resend.Emails.send({
+            "from": "EnginePro Losas <onboarding@resend.dev>",
+            "to": [ADMIN_EMAIL],
+            "subject": f"[EnginePro] Nueva descarga — {s_nombre} · {fecha_hora}",
+            "html": html_admin,
+        })
+        _email_logger.info(f"OK Resend — {reg.correo.strip()} — {s_nombre}")
 
-        _email_logger.info(f"OK — {reg.correo.strip()} — {s_nombre} — {s_empresa}")
-    except smtplib.SMTPAuthenticationError as e:
-        _email_logger.error(f"SMTP AUTH FAILED: {e.smtp_code} {e.smtp_error} — host={SMTP_HOST}:{SMTP_PORT}")
-    except smtplib.SMTPConnectError as e:
-        _email_logger.error(f"SMTP CONNECT FAILED: {e} — host={SMTP_HOST}:{SMTP_PORT}")
-    except smtplib.SMTPException as e:
-        _email_logger.error(f"SMTP ERROR: {type(e).__name__}: {e}")
     except Exception as e:
-        _email_logger.error(f"UNEXPECTED ERROR: {type(e).__name__}: {e}")
+        _email_logger.error(f"Resend ERROR: {type(e).__name__}: {e}")
 
 
 # ─── Catálogos ───
@@ -214,7 +186,6 @@ def get_catalogos():
 @app.post("/api/calcular")
 def api_calcular(datos: DatosEntrada):
     try:
-        # Force Maciza
         entrada = datos.model_dump()
         entrada["tipo_losa"] = "Maciza"
         R = calcular_losa(entrada)
@@ -226,7 +197,6 @@ def api_calcular(datos: DatosEntrada):
 # ─── Registro descarga + email ───
 @app.post("/api/registrar_descarga")
 async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
-    """Registra la descarga y envía email al admin en background."""
     try:
         background.add_task(enviar_email_registro, reg)
         return {"status": "ok"}
@@ -252,7 +222,6 @@ def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
         gen = MemoriaWord()
         gen.generar(R, tmpfile.name, proy)
 
-        # Limpiar archivo temporal después de enviar la respuesta
         def _cleanup(path):
             try:
                 if os.path.exists(path):
@@ -271,19 +240,18 @@ def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Frontend (condicional — en Render el frontend va en cPanel) ───
+# ─── Frontend ───
 _css_dir = os.path.join(FRONTEND_DIR, "css")
-_js_dir = os.path.join(FRONTEND_DIR, "js")
+_js_dir  = os.path.join(FRONTEND_DIR, "js")
 if os.path.isdir(_css_dir):
     app.mount("/css", StaticFiles(directory=_css_dir), name="css")
 if os.path.isdir(_js_dir):
-    app.mount("/js", StaticFiles(directory=_js_dir), name="js")
+    app.mount("/js",  StaticFiles(directory=_js_dir),  name="js")
 
 
 def _find_logo():
-    """Busca el logo en todas las ubicaciones posibles (V2 o V3)."""
     names = ["logo_creer_V3.png", "logo_creer_V2.png", "logo-creer-v2.png"]
-    dirs = [
+    dirs  = [
         FRONTEND_DIR,
         os.path.join(FRONTEND_DIR, "images"),
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),

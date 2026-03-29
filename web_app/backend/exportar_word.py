@@ -749,12 +749,14 @@ class MemoriaWord:
 
         try:
             fig_main = GraficasExport.crear_figura_principal(R)
-            fig_main.tight_layout()
+            # NO tight_layout(): GridSpec ya tiene top/bottom/left/right explícitos
+            # + suptitle(y=0.995) — tight_layout() conflicta y lanza excepción
             fig_main.savefig(path_diag, dpi=220, facecolor='white')
             plt.close(fig_main)
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(path_diag, width=Cm(16.5))
         except Exception as e:
+            import traceback; traceback.print_exc()
             self._para(doc, f"[Error generando diagramas: {e}]", italic=True, color=self.COL_GRAY)
 
         # ══════════ 9. SECCIÓN TRANSVERSAL ══════════
@@ -764,12 +766,13 @@ class MemoriaWord:
 
         try:
             fig_sec = GraficasExport.crear_figura_seccion(R)
-            fig_sec.tight_layout()
+            # NO tight_layout(): ya se llama dentro de crear_figura_seccion(pad=1.2)
             fig_sec.savefig(path_sec, dpi=220, facecolor='white')
             plt.close(fig_sec)
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(path_sec, width=Cm(15))
         except Exception as e:
+            import traceback; traceback.print_exc()
             self._para(doc, f"[Error generando sección: {e}]", italic=True, color=self.COL_GRAY)
 
         # Pie final

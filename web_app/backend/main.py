@@ -35,7 +35,7 @@ FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fronten
 
 ADMIN_EMAIL = "info@creeringenieria.com"
 
-# ─── Logger ───
+# Logger
 _log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 os.makedirs(_log_dir, exist_ok=True)
 _email_logger = logging.getLogger("enginepro.email")
@@ -50,7 +50,7 @@ _email_logger.addHandler(_sh)
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 
-# ─── Models ───
+# Models
 class DatosEntrada(BaseModel):
     tipo_losa: str = "Maciza"
     luces: List[float] = Field(default=[4.0])
@@ -93,23 +93,21 @@ class RegistroDescarga(BaseModel):
     entrada: DatosEntrada
 
 
-# ─── HTML sanitizer ───
 def _sanitize_html(s: str) -> str:
     return (s.replace("&", "&amp;").replace("<", "&lt;")
              .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-# ─── Email con Resend ───
+# Email con Resend
 def enviar_email_registro(reg: RegistroDescarga):
-    """Envía correo al admin con los datos del usuario que descargó (vía Resend HTTP API)."""
     import resend
 
     if not reg.nombre or not reg.nombre.strip():
-        _email_logger.warning("Registro rechazado: nombre vacío"); return
+        _email_logger.warning("Registro rechazado: nombre vacio"); return
     if not reg.correo or not _EMAIL_RE.match(reg.correo.strip()):
-        _email_logger.warning(f"Registro rechazado: correo inválido '{reg.correo}'"); return
+        _email_logger.warning(f"Registro rechazado: correo invalido '{reg.correo}'"); return
     if not reg.empresa or not reg.empresa.strip():
-        _email_logger.warning("Registro rechazado: empresa vacía"); return
+        _email_logger.warning("Registro rechazado: empresa vacia"); return
 
     RESEND_KEY = os.getenv("RESEND_API_KEY", "")
     if not RESEND_KEY:
@@ -123,46 +121,44 @@ def enviar_email_registro(reg: RegistroDescarga):
         s_nombre    = _sanitize_html(reg.nombre.strip())
         s_empresa   = _sanitize_html(reg.empresa.strip())
         s_correo    = _sanitize_html(reg.correo.strip())
-        s_pais      = _sanitize_html(reg.pais.strip() if reg.pais else "—")
-        s_proyecto  = _sanitize_html(reg.proyecto.strip()) if reg.proyecto else "—"
-        s_matricula = _sanitize_html(reg.matricula.strip()) if reg.matricula else "—"
+        s_pais      = _sanitize_html(reg.pais.strip() if reg.pais else "-")
+        s_proyecto  = _sanitize_html(reg.proyecto.strip()) if reg.proyecto else "-"
+        s_matricula = _sanitize_html(reg.matricula.strip()) if reg.matricula else "-"
 
-        html_admin = f"""
-        <html><body style="font-family:Arial,sans-serif;background:#f4f4f8;padding:20px">
-        <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
-            <div style="background:#1A1A2E;padding:20px 28px;border-bottom:4px solid #E03030">
-                <h2 style="color:#fff;margin:0;font-size:1.2rem">EnginePro Losas — Nueva Descarga</h2>
-                <p style="color:#8A90A8;margin:4px 0 0;font-size:0.85rem">{fecha_hora}</p>
-            </div>
-            <div style="padding:24px 28px">
-                <table style="width:100%;border-collapse:collapse;font-size:0.92rem">
-                    <tr><td style="color:#555;padding:6px 0;width:140px"><b>Nombre:</b></td><td style="color:#1A1A2E">{s_nombre}</td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>Empresa:</b></td><td style="color:#1A1A2E">{s_empresa}</td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>Correo:</b></td><td><a href="mailto:{reg.correo.strip()}" style="color:#E03030">{s_correo}</a></td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>País:</b></td><td style="color:#1A1A2E">{s_pais}</td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>Proyecto:</b></td><td style="color:#1A1A2E">{s_proyecto}</td></tr>
-                    <tr><td style="color:#555;padding:6px 0"><b>Matrícula:</b></td><td style="color:#1A1A2E">{s_matricula}</td></tr>
-                </table>
-                <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-                <h3 style="color:#1A1A2E;font-size:0.95rem;margin:0 0 10px">Parámetros calculados</h3>
-                <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
-                    <tr><td style="color:#555;padding:4px 0;width:140px">Luces:</td><td style="font-family:monospace">{luces_str}</td></tr>
-                    <tr><td style="color:#555;padding:4px 0">h / f'c / fy:</td><td style="font-family:monospace">{reg.entrada.h} cm / {reg.entrada.fc} MPa / {reg.entrada.fy} MPa</td></tr>
-                    <tr><td style="color:#555;padding:4px 0">CV / CM adic:</td><td style="font-family:monospace">{reg.entrada.cv} / {reg.entrada.cm_adic} kgf/m2</td></tr>
-                    <tr><td style="color:#555;padding:4px 0">Malla inf / sup:</td><td style="font-family:monospace">{_sanitize_html(reg.entrada.malla_inf)} / {_sanitize_html(reg.entrada.malla_sup)}</td></tr>
-                </table>
-            </div>
-            <div style="background:#f8f9fc;padding:12px 28px;font-size:0.78rem;color:#999">
-                EnginePro Losas v{VERSION} — CREER Ingenieria — creeringenieria.com
-            </div>
-        </div>
-        </body></html>
-        """
+        html_admin = f"""<html><body style="font-family:Arial,sans-serif;background:#f4f4f8;padding:20px">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+    <div style="background:#1A1A2E;padding:20px 28px;border-bottom:4px solid #E03030">
+        <h2 style="color:#fff;margin:0;font-size:1.2rem">EnginePro Losas - Nueva Descarga</h2>
+        <p style="color:#8A90A8;margin:4px 0 0;font-size:0.85rem">{fecha_hora}</p>
+    </div>
+    <div style="padding:24px 28px">
+        <table style="width:100%;border-collapse:collapse;font-size:0.92rem">
+            <tr><td style="color:#555;padding:6px 0;width:140px"><b>Nombre:</b></td><td style="color:#1A1A2E">{s_nombre}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Empresa:</b></td><td style="color:#1A1A2E">{s_empresa}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Correo:</b></td><td><a href="mailto:{reg.correo.strip()}" style="color:#E03030">{s_correo}</a></td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Pais:</b></td><td style="color:#1A1A2E">{s_pais}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Proyecto:</b></td><td style="color:#1A1A2E">{s_proyecto}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Matricula:</b></td><td style="color:#1A1A2E">{s_matricula}</td></tr>
+        </table>
+        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+        <h3 style="color:#1A1A2E;font-size:0.95rem;margin:0 0 10px">Parametros calculados</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+            <tr><td style="color:#555;padding:4px 0;width:140px">Luces:</td><td style="font-family:monospace">{luces_str}</td></tr>
+            <tr><td style="color:#555;padding:4px 0">h / f'c / fy:</td><td style="font-family:monospace">{reg.entrada.h} cm / {reg.entrada.fc} MPa / {reg.entrada.fy} MPa</td></tr>
+            <tr><td style="color:#555;padding:4px 0">CV / CM adic:</td><td style="font-family:monospace">{reg.entrada.cv} / {reg.entrada.cm_adic} kgf/m2</td></tr>
+            <tr><td style="color:#555;padding:4px 0">Malla inf / sup:</td><td style="font-family:monospace">{_sanitize_html(reg.entrada.malla_inf)} / {_sanitize_html(reg.entrada.malla_sup)}</td></tr>
+        </table>
+    </div>
+    <div style="background:#f8f9fc;padding:12px 28px;font-size:0.78rem;color:#999">
+        EnginePro Losas v{VERSION} - CREER Ingenieria - creeringenieria.com
+    </div>
+</div>
+</body></html>"""
 
         resend.Emails.send({
             "from": "EnginePro Losas <info@creeringenieria.com>",
             "to": [ADMIN_EMAIL],
-            "subject": f"[EnginePro] Nueva descarga — {s_nombre} · {fecha_hora}",
+            "subject": f"[EnginePro] Nueva descarga - {s_nombre} - {fecha_hora}",
             "html": html_admin,
         })
         _email_logger.info(f"OK Resend — {reg.correo.strip()} — {s_nombre}")
@@ -171,7 +167,7 @@ def enviar_email_registro(reg: RegistroDescarga):
         _email_logger.error(f"Resend ERROR: {type(e).__name__}: {e}")
 
 
-# ─── Catálogos ───
+# Catalogos
 @app.get("/api/catalogos")
 def get_catalogos():
     return {
@@ -182,7 +178,7 @@ def get_catalogos():
     }
 
 
-# ─── Cálculo ───
+# Calculo
 @app.post("/api/calcular")
 def api_calcular(datos: DatosEntrada):
     try:
@@ -194,7 +190,7 @@ def api_calcular(datos: DatosEntrada):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ─── Registro descarga + email ───
+# Registro descarga + email
 @app.post("/api/registrar_descarga")
 async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
     try:
@@ -204,7 +200,7 @@ async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Exportar Word ───
+# Exportar Word
 @app.post("/api/exportar_word")
 def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
     try:
@@ -240,7 +236,7 @@ def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Frontend ───
+# Frontend
 _css_dir = os.path.join(FRONTEND_DIR, "css")
 _js_dir  = os.path.join(FRONTEND_DIR, "js")
 if os.path.isdir(_css_dir):
@@ -291,7 +287,7 @@ def robots_txt():
         "Allow: /js/\n"
         "Allow: /images/\n"
         "Disallow: /api/\n"
-        f"Sitemap: https://creeringenieria.com/sitemap.xml\n"
+        "Sitemap: https://creeringenieria.com/sitemap.xml\n"
     )
     return HTMLResponse(content=content, media_type="text/plain")
 

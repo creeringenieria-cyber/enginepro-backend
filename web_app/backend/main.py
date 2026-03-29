@@ -160,7 +160,7 @@ def enviar_email_registro(reg: RegistroDescarga):
         """
 
         resend.Emails.send({
-            "from": "EnginePro Losas <onboarding@resend.dev>",
+            "from": "EnginePro Losas <info@creeringenieria.com>",
             "to": [ADMIN_EMAIL],
             "subject": f"[EnginePro] Nueva descarga — {s_nombre} · {fecha_hora}",
             "html": html_admin,

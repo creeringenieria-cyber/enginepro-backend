@@ -8,7 +8,14 @@ import sys
 import datetime
 import tempfile
 import math
+import logging
 import numpy as np
+
+# ── Silenciar warnings de fuentes ANTES de importar matplotlib ──
+# En Render (Linux) no existen Arial ni Helvetica; matplotlib fallback a DejaVu
+# pero imprime cientos de líneas "findfont: Generic family not found".
+logging.getLogger('matplotlib').setLevel(logging.ERROR)
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 import matplotlib
 matplotlib.use('Agg')
@@ -36,15 +43,23 @@ C_CONC      = "#B8C0CC"
 C_DIM       = "#4A5568"
 C_GRID      = "#E8ECF2"
 
+# DPI para exportar imágenes PNG al Word.
+# 150 DPI es suficiente para impresión A4 y evita imágenes de ~3300px de alto
+# que consumen RAM/tiempo excesivo en Render free tier.
+_EXPORT_DPI = 150
+
 
 class GraficasExport:
     """Gráficas matplotlib para insertar en Word — estilo 2026."""
 
     @staticmethod
     def setup_style():
+        # Se usan fuentes que SIEMPRE están disponibles en Linux (matplotlib las incluye).
+        # DejaVu Sans es la fuente por defecto de matplotlib; Liberation Sans suele
+        # estar en Ubuntu. Elimina por completo los warnings "findfont".
         plt.rcParams.update({
             'font.family': 'sans-serif',
-            'font.sans-serif': ['Arial', 'Helvetica', 'sans-serif'],
+            'font.sans-serif': ['DejaVu Sans', 'Liberation Sans', 'sans-serif'],
             'font.size': 9,
             'axes.titlesize': 11,
             'axes.titleweight': 'bold',
@@ -202,22 +217,25 @@ class GraficasExport:
         GraficasExport.setup_style()
 
         # ── Escala uniforme (mismo criterio que el SVG del browser) ──
-        # 1 unidad = 10cm. Losa mínimo 0.8u = 8cm visual, máximo 2.0u = 20cm visual.
         U_MIN, U_MAX = 0.8, 2.0
-        h_natural = R.h / 10.0          # unidades naturales
+        h_natural = R.h / 10.0
         if h_natural < U_MIN:
-            scale = U_MIN / h_natural    # escalar todo
+            scale = U_MIN / h_natural
         elif h_natural > U_MAX:
             scale = U_MAX / h_natural
         else:
             scale = 1.0
 
-        b   = 10.0 * scale              # 100cm a escala
-        h   = R.h  / 10.0 * scale      # altura losa a escala
-        rec = 0.30 * scale              # 3cm recubrimiento a escala
+        b   = 10.0 * scale
+        h   = R.h  / 10.0 * scale
 
-        # Radios de barras — escala real, sin factor de distorsión
-        # r_mm_to_u: mm → unidades de dibujo (1u=10cm → 1u=100mm)
+        # ── Recubrimiento dinámico ──
+        # R.d = h_losa - recubrimiento - db/2  →  recubrimiento efectivo = R.h - R.d
+        # Se convierte de cm a unidades de dibujo (1u = 10cm).
+        rec_cm  = R.h - R.d          # cm  (recubrimiento hasta centro de barra)
+        rec     = rec_cm / 10.0 * scale
+
+        # Radios de barras
         def bar_r(db_mm, sp_u):
             r_real = (db_mm / 2.0) / 100.0 * scale
             r_max  = sp_u * 0.42
@@ -240,7 +258,6 @@ class GraficasExport:
         r_gi = bar_r(db_gi, sp_inf) if db_gi > 0 else 0
         r_gs = bar_r(db_gs, sp_sup) if db_gs > 0 else 0
 
-        # figsize proporcional al rango de ejes para que set_aspect('equal') no distorsione
         x_margin, y_top, y_bot = 4.2 * scale, 1.2 * scale, 2.2 * scale
         xlim = (-1.0 * scale, b + x_margin)
         ylim = (-y_bot, h + y_top)
@@ -284,10 +301,10 @@ class GraficasExport:
                 bx = (i+1)*sp_sup + sp_sup/2
                 ax.add_patch(Circle((bx, h-rec), r_gs, color='#60A5FA', ec='#1E3A5F', lw=0.8, alpha=0.9, zorder=6))
 
-        # Recubrimiento
+        # Recubrimiento — etiqueta dinámica
         ax.annotate('', xy=(0.25*scale, rec), xytext=(0.25*scale, 0),
                     arrowprops=dict(arrowstyle='<->', color=C_DIM, lw=0.9))
-        ax.text(0.45*scale, rec/2, f'r={int(rec/scale*10):.0f}cm', fontsize=7, color=C_DIM, va='center')
+        ax.text(0.45*scale, rec/2, f'r={rec_cm:.1f}cm', fontsize=7, color=C_DIM, va='center')
 
         # Cotas
         def dim_h(x1, x2, y, label):
@@ -319,7 +336,6 @@ class GraficasExport:
         ax.set_title('SECCIÓN TRANSVERSAL Y ARMADO — Losa Maciza en 1 Dirección',
                      fontsize=11, fontweight='bold', color=C_PRIMARY, pad=10)
 
-        # Leyenda — debajo de las etiquetas, fuera del dibujo
         legend_elements = [
             mpatches.Patch(facecolor='#EF4444', edgecolor='#7F1D1D',
                            label=f'INF: {R.malla_inf} — Ø{db_mi:.2f}mm c/{MALLAS[R.malla_inf]["sep"]}cm'),
@@ -340,7 +356,6 @@ class GraficasExport:
 
         fig.tight_layout(pad=1.2)
         return fig
-
 
 
 class MemoriaWord:
@@ -365,14 +380,12 @@ class MemoriaWord:
         t = doc.add_table(rows=1+len(rows), cols=n)
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
         t.style = 'Table Grid'
-        # Header
         for i, h in enumerate(headers):
             c = t.rows[0].cells[i]; c.text = ""
             p = c.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             r = p.add_run(h); r.bold = True; r.font.size = Pt(9)
             r.font.color.rgb = self.COL_WHITE; r.font.name = 'Arial'
             self._shd(c, header_color)
-        # Rows
         for ri, row in enumerate(rows):
             for ci, val in enumerate(row):
                 c = t.rows[ri+1].cells[ci]; c.text = ""
@@ -448,8 +461,6 @@ class MemoriaWord:
         return p
 
     def _watermark_page(self, section):
-        """Agrega marca de agua CRÉER Ingeniería en encabezado."""
-        # Header with brand
         header = section.header
         header.is_linked_to_previous = False
         ht = header.paragraphs[0]
@@ -487,6 +498,9 @@ class MemoriaWord:
         ubicacion = datos_proyecto.get("ubicacion", "Colombia")
         fecha     = datos_proyecto.get("fecha", datetime.date.today().strftime("%d/%m/%Y"))
 
+        # Recubrimiento efectivo dinámico (recubrimiento + db/2 = h - d)
+        rec_efectivo_cm = R.h - R.d
+
         # Márgenes
         for sec in doc.sections:
             sec.top_margin    = Cm(2.5)
@@ -497,28 +511,24 @@ class MemoriaWord:
             self._add_footer(sec, fecha)
 
         # ══════════ PORTADA ══════════
-        doc.add_paragraph()  # espacio
+        doc.add_paragraph()
 
-        # Línea roja superior
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(18)
         pPr = p._p.get_or_add_pPr()
         pPr.insert(0, parse_xml(
             f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="36" w:space="6" w:color="E03030"/></w:pBdr>'))
 
-        # Empresa
         p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.paragraph_format.space_after = Pt(6)
         r = p.add_run(nombre); r.bold = True; r.font.size = Pt(28)
         r.font.color.rgb = self.COL_PRIMARY; r.font.name = 'Arial'
 
-        # Matrícula
         p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.paragraph_format.space_after = Pt(32)
         r = p.add_run(matricula); r.font.size = Pt(13)
         r.font.color.rgb = self.COL_GRAY; r.italic = True; r.font.name = 'Arial'
 
-        # Título
         p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.paragraph_format.space_after = Pt(10)
         r = p.add_run("MEMORIA DE CÁLCULO ESTRUCTURAL"); r.bold = True; r.font.size = Pt(24)
@@ -534,7 +544,6 @@ class MemoriaWord:
         r = p.add_run("Normativa: NSR-10 Título C / ACI 318"); r.font.size = Pt(12)
         r.font.color.rgb = self.COL_GRAY; r.font.name = 'Arial'
 
-        # Tabla info proyecto
         self._table(doc, ["Campo", "Detalle"],
                     [["PROYECTO:", proyecto], ["UBICACIÓN:", ubicacion],
                      ["FECHA:", fecha], ["SOFTWARE:", f"EnginePro Losas v{VERSION} · {nombre}"]],
@@ -542,7 +551,6 @@ class MemoriaWord:
 
         doc.add_paragraph().paragraph_format.space_after = Pt(16)
 
-        # Línea roja final portada
         p = doc.add_paragraph()
         pPr = p._p.get_or_add_pPr()
         pPr.insert(0, parse_xml(
@@ -590,7 +598,8 @@ class MemoriaWord:
                     [["Tipo de losa", "Maciza en 1 dirección"],
                      ["Espesor total h", f"{R.h:.1f} cm"],
                      ["Altura útil d", f"{R.d:.1f} cm"],
-                     ["Recubrimiento (hasta centro acero)", "3.0 cm"],
+                     # Recubrimiento dinámico: h - d = recubrimiento + db/2 (NSR-10)
+                     ["Recubrimiento (hasta centro acero)", f"{rec_efectivo_cm:.1f} cm"],
                      ["Ancho de diseño b", "100 cm (franja unitaria 1 m)"]],
                     [6.5, 11.5])
         doc.add_paragraph().paragraph_format.space_after = Pt(8)
@@ -749,9 +758,7 @@ class MemoriaWord:
 
         try:
             fig_main = GraficasExport.crear_figura_principal(R)
-            # NO tight_layout(): GridSpec ya tiene top/bottom/left/right explícitos
-            # + suptitle(y=0.995) — tight_layout() conflicta y lanza excepción
-            fig_main.savefig(path_diag, dpi=220, facecolor='white')
+            fig_main.savefig(path_diag, dpi=_EXPORT_DPI, facecolor='white')
             plt.close(fig_main)
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(path_diag, width=Cm(16.5))
@@ -766,8 +773,7 @@ class MemoriaWord:
 
         try:
             fig_sec = GraficasExport.crear_figura_seccion(R)
-            # NO tight_layout(): ya se llama dentro de crear_figura_seccion(pad=1.2)
-            fig_sec.savefig(path_sec, dpi=220, facecolor='white')
+            fig_sec.savefig(path_sec, dpi=_EXPORT_DPI, facecolor='white')
             plt.close(fig_sec)
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(path_sec, width=Cm(15))

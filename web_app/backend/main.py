@@ -8,6 +8,10 @@ import tempfile
 import datetime
 import logging
 
+# ── Silenciar warnings de fuentes matplotlib ANTES de cualquier import de matplotlib ──
+logging.getLogger('matplotlib').setLevel(logging.ERROR)
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -23,10 +27,12 @@ from .motor import (
 
 app = FastAPI(title="EnginePro Losas · CRÉER Ingeniería", version=VERSION)
 
+# ── CORS ──
+# NOTA: allow_credentials=True con allow_origins=["*"] es inválido por spec CORS
+# y starlette moderno tira ValueError al arrancar. Se elimina allow_credentials.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,7 +41,9 @@ FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fronten
 
 ADMIN_EMAIL = "info@creeringenieria.com"
 
-# Logger
+# ── Logger ──
+# En Render el filesystem es efímero: el email.log se pierde en cada reinicio.
+# Se conserva el FileHandler para debug local; en producción solo el StreamHandler importa.
 _log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 os.makedirs(_log_dir, exist_ok=True)
 _email_logger = logging.getLogger("enginepro.email")
@@ -50,7 +58,7 @@ _email_logger.addHandler(_sh)
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 
-# Models
+# ── Models ──
 class DatosEntrada(BaseModel):
     tipo_losa: str = "Maciza"
     luces: List[float] = Field(default=[4.0])
@@ -98,7 +106,7 @@ def _sanitize_html(s: str) -> str:
              .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-# Email con Resend
+# ── Email con Resend ──
 def enviar_email_registro(reg: RegistroDescarga):
     import resend
 
@@ -167,7 +175,16 @@ def enviar_email_registro(reg: RegistroDescarga):
         _email_logger.error(f"Resend ERROR: {type(e).__name__}: {e}")
 
 
-# Catalogos
+# ── Health check — UptimeRobot debe pingar ESTE endpoint, no "/" ──
+# Es liviano (solo JSON), no sirve archivos estáticos ni carga matplotlib.
+# Configurar en UptimeRobot como: https://enginepro-backend.onrender.com/health
+@app.get("/health")
+@app.head("/health")
+def health_check():
+    return {"status": "ok", "version": VERSION, "empresa": EMPRESA}
+
+
+# ── Catalogos ──
 @app.get("/api/catalogos")
 def get_catalogos():
     return {
@@ -178,7 +195,7 @@ def get_catalogos():
     }
 
 
-# Calculo
+# ── Calculo ──
 @app.post("/api/calcular")
 def api_calcular(datos: DatosEntrada):
     try:
@@ -190,7 +207,7 @@ def api_calcular(datos: DatosEntrada):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# Registro descarga + email
+# ── Registro descarga + email ──
 @app.post("/api/registrar_descarga")
 async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
     try:
@@ -200,7 +217,7 @@ async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Exportar Word
+# ── Exportar Word ──
 @app.post("/api/exportar_word")
 def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
     try:
@@ -236,7 +253,7 @@ def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Frontend
+# ── Frontend ──
 _css_dir = os.path.join(FRONTEND_DIR, "css")
 _js_dir  = os.path.join(FRONTEND_DIR, "js")
 if os.path.isdir(_css_dir):
@@ -307,7 +324,10 @@ def sitemap_xml():
     return HTMLResponse(content=xml, media_type="application/xml")
 
 
-@app.get("/")
+# ── Ruta raíz — acepta GET y HEAD ──
+# HEAD es el método que usan UptimeRobot y otros monitores.
+# Sin esto responde 405 y el monitor cree que la app está caída.
+@app.api_route("/", methods=["GET", "HEAD"])
 def index():
     index_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(index_path):

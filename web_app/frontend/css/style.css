@@ -198,6 +198,131 @@ body {
 .form-select { cursor: pointer; }
 .form-select option { background: var(--bg2); }
 
+/* ── AUTO-CALCULAR TOGGLE ── */
+.auto-card {
+  background: linear-gradient(135deg, rgba(224,48,48,0.06), var(--bg3));
+  border-color: rgba(224,48,48,0.18);
+}
+.auto-card.active {
+  border-color: rgba(224,48,48,0.5);
+  box-shadow: 0 0 18px rgba(224,48,48,0.12);
+}
+.auto-toggle-row {
+  display: flex; align-items: center; gap: 0.75rem;
+}
+.auto-switch {
+  position: relative; display: inline-block;
+  width: 42px; height: 22px; flex-shrink: 0; cursor: pointer;
+}
+.auto-switch input { opacity: 0; width: 0; height: 0; }
+.auto-slider {
+  position: absolute; inset: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 22px; transition: 0.2s;
+}
+.auto-slider::before {
+  content: ''; position: absolute;
+  height: 16px; width: 16px;
+  left: 2px; top: 2px;
+  background: var(--txt3);
+  border-radius: 50%; transition: 0.2s;
+}
+.auto-switch input:checked + .auto-slider {
+  background: var(--red); border-color: var(--red);
+}
+.auto-switch input:checked + .auto-slider::before {
+  transform: translateX(20px); background: #fff;
+}
+.auto-text { flex: 1; line-height: 1.2; }
+.auto-title {
+  font-family: var(--display); font-size: 0.9rem;
+  font-weight: 700; color: var(--txt); letter-spacing: 0.04em;
+}
+.auto-sub {
+  font-size: 0.7rem; color: var(--txt3);
+  letter-spacing: 0.03em; margin-top: 2px;
+}
+.btn-opt-toggle {
+  background: transparent; border: 1px solid var(--border2);
+  border-radius: 6px; width: 28px; height: 28px;
+  color: var(--txt2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.btn-opt-toggle:hover { color: var(--red); border-color: var(--red); }
+.btn-opt-toggle.active { color: var(--red); border-color: var(--red); background: var(--red-glow); }
+
+.opt-params-panel {
+  margin-top: 0.75rem; padding-top: 0.75rem;
+  border-top: 1px dashed var(--border2);
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+
+.opt-badge {
+  margin-top: 0.75rem; padding: 0.7rem 0.85rem;
+  background: linear-gradient(135deg, rgba(34,197,94,0.1), rgba(34,197,94,0.02));
+  border: 1px solid rgba(34,197,94,0.35);
+  border-radius: 8px;
+  font-family: var(--mono); font-size: 0.75rem;
+  color: var(--ok); line-height: 1.5;
+}
+.opt-badge .opt-badge-title {
+  font-family: var(--display); font-size: 0.72rem;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ok); margin-bottom: 0.35rem; font-weight: 700;
+}
+.opt-badge .opt-badge-row { display: flex; justify-content: space-between; gap: 0.5rem; }
+.opt-badge .opt-badge-row b { color: var(--txt); font-weight: 600; }
+.opt-badge .opt-cost {
+  margin-top: 0.4rem; padding-top: 0.4rem;
+  border-top: 1px dashed rgba(34,197,94,0.25);
+  font-family: var(--display); font-size: 0.95rem;
+  color: var(--ok); letter-spacing: 0.02em;
+  display: flex; justify-content: space-between;
+}
+
+.validity-badge {
+  margin-top: 0.75rem; padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  font-family: var(--mono); font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.validity-badge.ok {
+  background: rgba(34,197,94,0.08);
+  border: 1px solid rgba(34,197,94,0.3);
+  color: var(--ok);
+}
+.validity-badge.fail {
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: var(--inf);
+}
+.validity-badge .v-icon { font-size: 0.9rem; }
+
+/* ── LOCKED INPUTS (modo auto activo) ── */
+.form-input.locked, .form-select.locked {
+  background: rgba(10,11,15,0.7);
+  color: var(--txt2);
+  cursor: not-allowed;
+  opacity: 0.75;
+  border-style: dashed;
+}
+.form-input.locked:focus, .form-select.locked:focus {
+  box-shadow: none; border-color: var(--border2);
+}
+
+/* ── VALIDACIÓN LIVE (modo manual) ── */
+.form-input.valid-live {
+  border-color: rgba(34,197,94,0.6);
+  box-shadow: 0 0 0 1px rgba(34,197,94,0.18);
+}
+.form-input.invalid-live {
+  border-color: rgba(239,68,68,0.6);
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.18);
+}
+
 /* ── SPANS ── */
 .spans-controls {
   display: flex;
@@ -613,6 +738,79 @@ body {
   border-radius: 6px;
   padding: 0.4rem 0.75rem;
   backdrop-filter: blur(8px);
+}
+
+/* ── HEATMAP CONTROLS (barra superior izquierda del visor 3D) ── */
+.viewer3d-heat {
+  position: absolute;
+  top: 0.75rem; left: 0.75rem;
+  display: flex; align-items: center; gap: 0.35rem;
+  background: rgba(10,11,15,0.85);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  backdrop-filter: blur(8px);
+  z-index: 10; flex-wrap: wrap; max-width: calc(100% - 4rem);
+}
+.heat-label {
+  font-family: var(--display); font-size: 0.7rem;
+  color: var(--txt3); letter-spacing: 0.08em;
+  text-transform: uppercase; margin-right: 2px;
+}
+.heat-btn {
+  width: auto !important; height: 26px !important;
+  padding: 0 0.55rem; font-size: 0.7rem !important;
+  font-family: var(--sans); font-weight: 500;
+  letter-spacing: 0.03em;
+}
+.heat-slider {
+  -webkit-appearance: none; appearance: none;
+  width: 90px; height: 4px;
+  background: var(--bg2); border-radius: 4px;
+  outline: none; border: 1px solid var(--border2);
+}
+.heat-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px;
+  background: var(--red); border-radius: 50%;
+  cursor: pointer;
+}
+.heat-slider::-moz-range-thumb {
+  width: 12px; height: 12px;
+  background: var(--red); border-radius: 50%;
+  cursor: pointer; border: none;
+}
+.heat-val {
+  font-family: var(--mono); font-size: 0.7rem;
+  color: var(--txt2); min-width: 40px;
+}
+
+/* Leyenda del heatmap (degradado + extremos) */
+.viewer3d-heatlegend {
+  position: absolute;
+  bottom: 0.75rem; right: 0.75rem;
+  background: rgba(10,11,15,0.85);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  backdrop-filter: blur(8px);
+  font-family: var(--mono); font-size: 0.68rem;
+  color: var(--txt2); min-width: 180px; z-index: 10;
+}
+.viewer3d-heatlegend .hl-title {
+  font-family: var(--display); font-size: 0.72rem;
+  color: var(--txt); letter-spacing: 0.06em;
+  text-transform: uppercase; margin-bottom: 0.35rem;
+}
+.viewer3d-heatlegend .hl-bar {
+  height: 10px; border-radius: 3px;
+  background: linear-gradient(90deg,
+    #3B82F6 0%, #10B981 33%, #F59E0B 66%, #E03030 100%);
+  margin-bottom: 0.3rem;
+}
+.viewer3d-heatlegend .hl-ticks {
+  display: flex; justify-content: space-between;
+  font-size: 0.65rem; color: var(--txt3);
 }
 
 .leg-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.7rem; color: var(--txt2); }

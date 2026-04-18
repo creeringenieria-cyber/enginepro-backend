@@ -19,15 +19,45 @@
     <meta property="og:title" content="Calculadora Losas Macizas NSR-10 Gratis — CRÉER Ingeniería" />
     <meta property="og:description" content="Diseño integral de losas macizas bajo NSR-10. Refuerzo, deflexiones, cortante, visor 3D y memoria Word. Herramienta gratuita." />
     <meta property="og:url" content="https://creeringenieria.com/herramientas/losas/" />
-    <meta property="og:image" content="https://creeringenieria.com/images/logo-creer-v2.png" />
+    <meta property="og:image" content="https://creeringenieria.com/herramientas/losas/images/og-losas-1200x630.png" />
+    <meta property="og:image:secure_url" content="https://creeringenieria.com/herramientas/losas/images/og-losas-1200x630.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="EnginePro Losas — Calculadora NSR-10 de CRÉER Ingeniería" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@creeringenieria" />
     <meta name="twitter:title" content="Calculadora Losas Macizas NSR-10 — CRÉER Ingeniería" />
     <meta name="twitter:description" content="Herramienta gratuita: diseño de losas macizas NSR-10, memoria de cálculo Word, visor 3D." />
+    <meta name="twitter:image" content="https://creeringenieria.com/herramientas/losas/images/og-losas-1200x630.png" />
+    <meta name="twitter:image:alt" content="EnginePro Losas — Calculadora NSR-10 de CRÉER Ingeniería" />
     <meta name="geo.region" content="CO-ANT" />
     <meta name="geo.placename" content="Medellín" />
     <meta name="theme-color" content="#0A0B0F" />
     <link rel="alternate" hreflang="es-CO" href="https://creeringenieria.com/herramientas/losas/" />
     <link rel="alternate" hreflang="es" href="https://creeringenieria.com/herramientas/losas/" />
+
+    <!-- Schema Organization — habilita Knowledge Panel de Google -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "CRÉER Ingeniería",
+      "url": "https://creeringenieria.com/",
+      "logo": "https://creeringenieria.com/images/logo-creer-v2.png",
+      "email": "info@creeringenieria.com",
+      "telephone": "+57 301 699 3350",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Medellín",
+        "addressRegion": "Antioquia",
+        "addressCountry": "CO"
+      },
+      "sameAs": [
+        "https://www.instagram.com/creer.ingenieria/"
+      ]
+    }
+    </script>
 
     <!-- Schema SoftwareApplication -->
     <script type="application/ld+json">
@@ -149,6 +179,38 @@
 
 <div class="main-container">
     <aside class="panel-inputs">
+        <div class="card auto-card">
+            <div class="auto-toggle-row">
+                <label class="auto-switch">
+                    <input type="checkbox" id="toggle-auto">
+                    <span class="auto-slider"></span>
+                </label>
+                <div class="auto-text">
+                    <div class="auto-title">Auto-Calcular</div>
+                    <div class="auto-sub">Diseño óptimo (mín. costo)</div>
+                </div>
+                <button class="btn-opt-toggle" id="btn-opt-params" type="button" title="Parámetros de optimización">⚙</button>
+            </div>
+            <div id="opt-params" class="opt-params-panel" style="display:none">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Concreto (COP/m³)</label>
+                        <input type="number" id="precio_concreto" class="form-input" value="450000" step="10000" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Acero (COP/kg)</label>
+                        <input type="number" id="precio_acero" class="form-input" value="4800" step="100" min="0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Δh máx sobre h_mín (cm)</label>
+                    <input type="number" id="extra_cm" class="form-input" value="15" step="1" min="1" max="30">
+                </div>
+            </div>
+            <div id="opt-badge" class="opt-badge" style="display:none"></div>
+            <div id="validity-badge" class="validity-badge" style="display:none"></div>
+        </div>
+
         <div class="card">
             <div class="card-title"><span class="icon-badge">▦</span> Geometría · Losa Maciza</div>
             <div class="form-group">
@@ -277,7 +339,18 @@
                         <button class="v3d-btn" onclick="toggleDeformed()" id="btn-deform" title="Ver deformada">⌇</button>
                         <button class="v3d-btn" onclick="toggleWireframe()" id="btn-wire" title="Wireframe">⊡</button>
                     </div>
+                    <div class="viewer3d-heat">
+                        <span class="heat-label">Mapa:</span>
+                        <button class="v3d-btn heat-btn active" onclick="setHeatMode('none')"   data-heat="none">Concreto</button>
+                        <button class="v3d-btn heat-btn"        onclick="setHeatMode('moment')" data-heat="moment">Momento</button>
+                        <button class="v3d-btn heat-btn"        onclick="setHeatMode('shear')"  data-heat="shear">Cortante</button>
+                        <button class="v3d-btn heat-btn"        onclick="setHeatMode('defl')"   data-heat="defl">Deflexión</button>
+                        <span class="heat-label" style="margin-left:6px">Exag:</span>
+                        <input type="range" id="defl-scale" min="10" max="500" step="10" value="100" class="heat-slider">
+                        <span class="heat-val" id="defl-scale-val">×100</span>
+                    </div>
                     <div id="viewer-3d"></div>
+                    <div id="heat-legend" class="viewer3d-heatlegend" style="display:none"></div>
                     <div class="viewer3d-legend">
                         <div class="leg-item"><span class="leg-dot sup-dot"></span>Refuerzo SUP</div>
                         <div class="leg-item"><span class="leg-dot inf-dot"></span>Refuerzo INF</div>
@@ -406,7 +479,13 @@
 </footer>
 
 <script>
-    window.API_BASE_URL = 'https://enginepro-backend.onrender.com';
+    // En local (localhost / 127.0.0.1 / file://) usa el backend del mismo host.
+    // En producción apunta al Render desplegado.
+    (function () {
+        var h = window.location.hostname;
+        var esLocal = (h === 'localhost' || h === '127.0.0.1' || h === '' || window.location.protocol === 'file:');
+        window.API_BASE_URL = esLocal ? '' : 'https://enginepro-backend.onrender.com';
+    })();
 </script>
 <script defer src="js/app.js"></script>
 </body>

@@ -5,7 +5,18 @@
           validación email, correo local debug
    ═══════════════════════════════════════════════════════ */
 
-const API_BASE = window.API_BASE_URL || '';
+// Auto-detect backend: si la página se sirve desde un puerto distinto al backend
+// (Live Server :5500, http-server :3000, :8080, file://, etc.) apunta a localhost:8000.
+// En producción y cuando FastAPI sirve el HTML directo, queda relativo (string vacío).
+const API_BASE = (function () {
+    if (window.API_BASE_URL) return window.API_BASE_URL;
+    const loc = window.location;
+    if (loc.protocol === 'file:') return 'http://localhost:8000';
+    const devPorts = ['3000', '5500', '5501', '5173', '8080', '8081', '4200'];
+    if (devPorts.includes(loc.port)) return 'http://localhost:8000';
+    return '';
+})();
+console.info('[EnginePro] API_BASE =', API_BASE || '(mismo origen)');
 
 /* ─── State ─── */
 let catalogos = {};
@@ -14,6 +25,8 @@ let currentPatternIdx = 0;
 let patternAnimInterval = null;
 let numSpans = 2;
 let unidades = 'KN';   // 'KN' | 'KGF'
+let autoMode = false;
+let liveValidateTimer = null;
 
 /* ─── Three.js ─── */
 let scene3D, camera3D, renderer3D, animFrameId;
@@ -22,6 +35,8 @@ let spherical = { theta: -0.4, phi: 1.0, radius: 12 };
 let showDeformed = false, showWireframe = false;
 let meshConcrete = null, barsGroup = null, deformGroup = null;
 let resultado3D = null;
+let heatMode = 'none';       // 'none' | 'moment' | 'shear' | 'defl'
+let deflScaleMult = 100;     // multiplicador de exageración (slider)
 
 /* ─── Init ─── */
 document.addEventListener('DOMContentLoaded', async () => {
@@ -70,6 +85,95 @@ function setupEventListeners() {
     document.getElementById('btn-export-word').addEventListener('click', () =>
         document.getElementById('modal-registro').classList.add('active'));
     document.getElementById('btn-unidades').addEventListener('click', toggleUnidades);
+
+    /* Modo híbrido */
+    document.getElementById('toggle-auto').addEventListener('change', e => setAutoMode(e.target.checked));
+    document.getElementById('btn-opt-params').addEventListener('click', () => {
+        const p = document.getElementById('opt-params');
+        const btn = document.getElementById('btn-opt-params');
+        const visible = p.style.display !== 'none';
+        p.style.display = visible ? 'none' : 'flex';
+        btn.classList.toggle('active', !visible);
+    });
+
+    /* Validación live en modo manual: cualquier cambio en inputs re-calcula silenciosamente */
+    const liveSel = '#h, #fc, #fy, #cv, #cm_adic, #malla_sup, #malla_inf, #grafil_sup, #grafil_inf';
+    document.querySelectorAll(liveSel).forEach(el => {
+        el.addEventListener('input', scheduleLiveValidate);
+        el.addEventListener('change', scheduleLiveValidate);
+    });
+    document.getElementById('spans-container').addEventListener('input', scheduleLiveValidate);
+
+    /* Slider de exageración de deformada */
+    const sl = document.getElementById('defl-scale');
+    if (sl) sl.addEventListener('input', e => {
+        deflScaleMult = parseInt(e.target.value) || 100;
+        document.getElementById('defl-scale-val').textContent = `×${deflScaleMult}`;
+        if (resultado3D && renderer3D) buildSlab3D(resultado3D);
+    });
+}
+
+/* ─── MODO HÍBRIDO ─── */
+function setAutoMode(enabled) {
+    autoMode = enabled;
+    const ids = ['h', 'fc', 'fy', 'cv', 'cm_adic', 'malla_sup', 'malla_inf', 'grafil_sup', 'grafil_inf'];
+    // h y mallas se bloquean cuando auto=true. fc/fy/cv/cm_adic siguen editables (definen el problema).
+    const bloqueados = ['h', 'malla_sup', 'malla_inf', 'grafil_sup', 'grafil_inf'];
+    bloqueados.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.disabled = enabled;
+        el.classList.toggle('locked', enabled);
+    });
+    document.querySelectorAll('.auto-card').forEach(c => c.classList.toggle('active', enabled));
+    document.getElementById('btn-calcular').innerHTML = enabled
+        ? '<span class="btn-icon">✦</span> OPTIMIZAR'
+        : '<span class="btn-icon">⟐</span> CALCULAR';
+    const badge = document.getElementById('opt-badge');
+    const vb = document.getElementById('validity-badge');
+    if (!enabled) { badge.style.display = 'none'; }
+    else { vb.style.display = 'none'; clearLiveValidation(); }
+}
+
+function clearLiveValidation() {
+    document.querySelectorAll('.form-input, .form-select').forEach(el => {
+        el.classList.remove('valid-live', 'invalid-live');
+    });
+}
+
+function scheduleLiveValidate() {
+    if (autoMode) return;  // sin validación live en modo auto
+    clearTimeout(liveValidateTimer);
+    liveValidateTimer = setTimeout(runLiveValidate, 450);
+}
+
+async function runLiveValidate() {
+    const inputs = document.querySelectorAll('.form-input, .form-select');
+    try {
+        const res = await fetch(`${API_BASE}/api/calcular`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildPayload()),
+        });
+        if (!res.ok) throw new Error('calc-fail');
+        const R = await res.json();
+        const ok = R.estado === 'CUMPLE';
+        const vb = document.getElementById('validity-badge');
+        vb.style.display = 'flex';
+        vb.className = 'validity-badge ' + (ok ? 'ok' : 'fail');
+        if (ok) {
+            vb.innerHTML = '<span class="v-icon">✔</span><span>Diseño cumple NSR-10</span>';
+        } else {
+            const fails = Object.entries(R.verificaciones || {})
+                .filter(([_, v]) => !v).map(([k]) => k.split(' (')[0]);
+            vb.innerHTML = `<span class="v-icon">✘</span><span>Falla: ${fails.slice(0, 2).join(' · ') || 'revisar'}</span>`;
+        }
+        inputs.forEach(el => {
+            el.classList.remove('valid-live', 'invalid-live');
+            if (!el.disabled) el.classList.add(ok ? 'valid-live' : 'invalid-live');
+        });
+    } catch (e) {
+        /* silencioso: inputs inválidos del usuario no deben tirar errores */
+    }
 }
 
 /* ─── Unidades ─── */
@@ -140,28 +244,80 @@ function buildPayload() {
     };
 }
 
-/* ─── CALCULAR ─── */
+/* ─── CALCULAR / OPTIMIZAR ─── */
 async function calcular() {
     const btn = document.getElementById('btn-calcular');
+    const origHTML = btn.innerHTML;
     btn.classList.add('loading');
-    btn.innerHTML = '<span class="btn-icon">⟳</span> Calculando...';
+    btn.innerHTML = autoMode
+        ? '<span class="btn-icon">⟳</span> Optimizando...'
+        : '<span class="btn-icon">⟳</span> Calculando...';
     try {
-        const res = await fetch(`${API_BASE}/api/calcular`, {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify(buildPayload()),
+        const url = autoMode ? `${API_BASE}/api/optimizar` : `${API_BASE}/api/calcular`;
+        const body = autoMode ? buildOptimizarPayload() : buildPayload();
+        const res = await fetch(url, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
         });
-        if(!res.ok) { const e=await res.json(); throw new Error(e.detail||'Error'); }
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Error'); }
         resultado = await res.json();
+        if (autoMode && resultado.optimizacion) {
+            reflectOptimoEnForm(resultado);
+            renderOptBadge(resultado.optimizacion);
+        }
         resultado3D = resultado;
         renderResults();
         document.getElementById('btn-export-word').disabled = false;
-        showToast('Cálculo completado ✓', 'ok');
-    } catch(e) {
-        showToast('Error: '+e.message, 'err');
+        showToast(autoMode ? 'Optimización completada ✓' : 'Cálculo completado ✓', 'ok');
+    } catch (e) {
+        showToast('Error: ' + e.message, 'err');
     } finally {
         btn.classList.remove('loading');
-        btn.innerHTML = '<span class="btn-icon">⟐</span> CALCULAR';
+        btn.innerHTML = origHTML;
     }
+}
+
+function buildOptimizarPayload() {
+    return {
+        luces: getSpanValues(),
+        fc: parseFloat(document.getElementById('fc').value) || 21,
+        fy: parseFloat(document.getElementById('fy').value) || 420,
+        cv: parseFloat(document.getElementById('cv').value) || 180,
+        cm_adic: parseFloat(document.getElementById('cm_adic').value) || 150,
+        precio_concreto_m3: parseFloat(document.getElementById('precio_concreto').value) || 450000,
+        precio_acero_kg: parseFloat(document.getElementById('precio_acero').value) || 4800,
+        extra_cm: parseInt(document.getElementById('extra_cm').value) || 15,
+        historial_completo: false,
+    };
+}
+
+function reflectOptimoEnForm(R) {
+    // Refleja h, mallas óptimas en los inputs deshabilitados para feedback visual
+    document.getElementById('h').value = R.h;
+    if (document.querySelector(`#malla_sup option[value="${CSS.escape(R.malla_sup)}"]`))
+        document.getElementById('malla_sup').value = R.malla_sup;
+    if (document.querySelector(`#malla_inf option[value="${CSS.escape(R.malla_inf)}"]`))
+        document.getElementById('malla_inf').value = R.malla_inf;
+    if (document.querySelector(`#grafil_sup option[value="${CSS.escape(R.grafil_sup)}"]`))
+        document.getElementById('grafil_sup').value = R.grafil_sup;
+    if (document.querySelector(`#grafil_inf option[value="${CSS.escape(R.grafil_inf)}"]`))
+        document.getElementById('grafil_inf').value = R.grafil_inf;
+}
+
+function renderOptBadge(opt) {
+    const m = opt.mejor;
+    const badge = document.getElementById('opt-badge');
+    const fmt = n => Math.round(n).toLocaleString('es-CO');
+    badge.style.display = 'block';
+    badge.innerHTML = `
+        <div class="opt-badge-title">✦ Diseño óptimo</div>
+        <div class="opt-badge-row"><span>Espesor</span><b>${m.h} cm</b></div>
+        <div class="opt-badge-row"><span>Malla inf</span><b>${m.malla_inf}</b></div>
+        <div class="opt-badge-row"><span>Malla sup</span><b>${m.malla_sup}</b></div>
+        <div class="opt-badge-row"><span>Concreto</span><b>${m.costo.vol_concreto_m3} m³</b></div>
+        <div class="opt-badge-row"><span>Acero</span><b>${fmt(m.costo.peso_acero_kg)} kg</b></div>
+        <div class="opt-cost"><span>Costo total</span><span>$ ${fmt(m.costo.costo_total)}</span></div>
+    `;
 }
 
 /* ─── RENDER ─── */
@@ -461,7 +617,7 @@ function init3DViewer(R) {
     camera3D = new THREE.PerspectiveCamera(45,W/H,0.1,200);
     updateCamPos();
 
-    renderer3D = new THREE.WebGLRenderer({antialias:true,alpha:true});
+    renderer3D = new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
     renderer3D.setSize(W,H);
     renderer3D.setPixelRatio(Math.min(window.devicePixelRatio,2));
     renderer3D.shadowMap.enabled = true;
@@ -501,12 +657,17 @@ function buildSlab3D(R) {
     const width = 3.0;
     const cx = -L_total/2;
 
-    /* ── CONCRETE — sin wireframe, transparencia suave ── */
-    const geomConc = new THREE.BoxGeometry(L_total, h_m, width, 1, 1, 1);
+    /* ── CONCRETE — geometría segmentada para heatmap por vertex colors ── */
+    const N_SEG = 80;  // segmentos longitudinales (suaviza el degradado)
+    const geomConc = new THREE.BoxGeometry(L_total, h_m, width, N_SEG, 1, 1);
+    applyHeatmapColors(geomConc, R, L_total);
     const matConc = new THREE.MeshStandardMaterial({
-        color: 0xB8BEC9, roughness:0.72, metalness:0.04,
-        transparent:true, opacity:0.62,
-        depthWrite:false,
+        color: heatMode === 'none' ? 0xB8BEC9 : 0xFFFFFF,
+        vertexColors: heatMode !== 'none',
+        roughness: 0.72, metalness: 0.04,
+        transparent: true,
+        opacity: heatMode === 'none' ? 0.62 : 0.88,
+        depthWrite: false,
     });
     meshConcrete = new THREE.Mesh(geomConc, matConc);
     meshConcrete.position.set(cx+L_total/2, h_m/2, 0);
@@ -515,10 +676,13 @@ function buildSlab3D(R) {
     scene3D.add(meshConcrete);
 
     /* Subtle edge lines only on outer border */
-    const edgeGeo = new THREE.EdgesGeometry(geomConc);
+    const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(L_total, h_m, width, 1, 1, 1));
     const edgeMat = new THREE.LineBasicMaterial({color:0x4A5568,transparent:true,opacity:0.4});
     const edgeLines = new THREE.LineSegments(edgeGeo,edgeMat);
     meshConcrete.add(edgeLines);
+
+    /* Actualiza leyenda del heatmap */
+    updateHeatLegend(R);
 
     /* ── SUPPORTS ── */
     let apoyosX=[0];
@@ -596,17 +760,14 @@ function buildSlab3D(R) {
 }
 
 function buildDeformed(R, cx, h_m, width, L_total) {
-    /* Escala adaptativa:
-       - Calcula la deflexión máxima real en metros
-       - La escala visual objetivo es ~15% del alto de la losa visible
-       - Nunca más de L/30 de exageración visual */
+    /* Escala adaptativa (delta_LP_x está en mm):
+       - En slider=100 la deflexión se dibuja ocupando ~30 % de h (natural).
+       - Slider=10 la muestra casi plana; slider=500 la exagera 5×. */
     const deflMax = Math.max(...R.delta_LP_x.map(Math.abs));
     if(deflMax < 1e-8) return;
 
-    const targetVisual = h_m * 0.4;   // 40% del alto de losa como máximo visual
-    const naturalScale = targetVisual / deflMax;
-    // Cap: no más de L_total*0.05 visual aunque la deflexión sea pequeña
-    const scale = Math.min(naturalScale, L_total * 0.05 / deflMax);
+    const refScale = (h_m * 0.3) / deflMax;
+    const scale = refScale * (deflScaleMult / 100);
 
     deformGroup = new THREE.Group(); deformGroup.userData.slab=true;
 
@@ -635,6 +796,115 @@ function buildDeformed(R, cx, h_m, width, L_total) {
     deformGroup.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({color:0xC4B5FD,linewidth:2})));
 
     scene3D.add(deformGroup);
+}
+
+/* ═══════════════════════════════════════════════════════
+   HEATMAP (vertex colors)
+   ═══════════════════════════════════════════════════════ */
+
+/* Rampa Azul → Verde → Amarillo → Rojo (t en [0,1]) */
+function heatColor(t) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [
+        [0.00, 0x3B, 0x82, 0xF6],   // #3B82F6 azul
+        [0.33, 0x10, 0xB9, 0x81],   // #10B981 verde
+        [0.66, 0xF5, 0x9E, 0x0B],   // #F59E0B amarillo
+        [1.00, 0xE0, 0x30, 0x30],   // #E03030 rojo
+    ];
+    for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i], b = stops[i+1];
+        if (t <= b[0]) {
+            const u = (t - a[0]) / (b[0] - a[0] || 1);
+            return [
+                (a[1] + (b[1]-a[1])*u) / 255,
+                (a[2] + (b[2]-a[2])*u) / 255,
+                (a[3] + (b[3]-a[3])*u) / 255,
+            ];
+        }
+    }
+    return [1, 0, 0];
+}
+
+/* Serie escogida para el heatmap según modo */
+function heatSeries(R, mode) {
+    if (!R.x_global || !R.x_global.length) return null;
+    let y, min, max;
+    if (mode === 'moment') {
+        // Usamos max(|M+|, |M-|) como demanda absoluta de flexión
+        y = R.x_global.map((_, i) => Math.max(Math.abs(R.M_env_max[i]||0), Math.abs(R.M_env_min[i]||0)));
+    } else if (mode === 'shear') {
+        y = R.x_global.map((_, i) => Math.max(Math.abs(R.V_env_max[i]||0), Math.abs(R.V_env_min[i]||0)));
+    } else if (mode === 'defl') {
+        if (!R.delta_LP_x || !R.delta_LP_x.length) return null;
+        y = R.delta_LP_x.map(v => Math.abs(v));
+    } else {
+        return null;
+    }
+    min = Math.min(...y); max = Math.max(...y);
+    return { y, min, max };
+}
+
+/* Aplica vertex colors a la geometría del concreto según heatMode.
+   La caja Three.js se construye centrada en el origen con ancho L_total en X;
+   los vértices se interpolan por coordenada X sobre la serie de demanda. */
+function applyHeatmapColors(geom, R, L_total) {
+    const s = heatMode === 'none' ? null : heatSeries(R, heatMode);
+    const pos = geom.attributes.position;
+    const nVerts = pos.count;
+    const colors = new Float32Array(nVerts * 3);
+
+    if (!s || (s.max - s.min) < 1e-10) {
+        // Sin heatmap o sin variación: gris uniforme
+        for (let i = 0; i < nVerts; i++) {
+            colors[i*3] = 0.72; colors[i*3+1] = 0.75; colors[i*3+2] = 0.79;
+        }
+    } else {
+        const xLen = R.x_global.length;
+        for (let i = 0; i < nVerts; i++) {
+            // x del vértice en [-L/2, L/2] → [0, 1] relativo al eje x_global
+            const xv = pos.getX(i);
+            const tx = (xv + L_total/2) / L_total;
+            const idx = Math.max(0, Math.min(xLen - 1, Math.round(tx * (xLen - 1))));
+            const t = (s.y[idx] - s.min) / (s.max - s.min);
+            const [r, g, b] = heatColor(t);
+            colors[i*3] = r; colors[i*3+1] = g; colors[i*3+2] = b;
+        }
+    }
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+}
+
+/* Leyenda del heatmap (valores extremos + unidad) */
+function updateHeatLegend(R) {
+    const el = document.getElementById('heat-legend');
+    if (!el) return;
+    if (heatMode === 'none') { el.style.display = 'none'; return; }
+    const s = heatSeries(R, heatMode);
+    if (!s) { el.style.display = 'none'; return; }
+    const unit = heatMode === 'moment' ? 'kN·m'
+               : heatMode === 'shear'  ? 'kN'
+               : 'mm';
+    const title = heatMode === 'moment' ? 'Demanda de Momento |M|'
+                : heatMode === 'shear'  ? 'Demanda de Cortante |V|'
+                : 'Deflexión largo plazo |δLP|';
+    el.style.display = 'block';
+    el.innerHTML = `
+        <div class="hl-title">${title}</div>
+        <div class="hl-bar"></div>
+        <div class="hl-ticks">
+            <span>${s.min.toFixed(2)} ${unit}</span>
+            <span>${((s.min+s.max)/2).toFixed(2)}</span>
+            <span>${s.max.toFixed(2)} ${unit}</span>
+        </div>
+    `;
+}
+
+/* Toggle del modo de heatmap desde los botones */
+function setHeatMode(mode) {
+    heatMode = mode;
+    document.querySelectorAll('.heat-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.heat === mode);
+    });
+    if (resultado3D && renderer3D) buildSlab3D(resultado3D);
 }
 
 function addBar(group,x0,x1,y,z,r,mat){
@@ -769,6 +1039,56 @@ function renderVerifTable(R){
    ═══════════════════════════════════════════════════════ */
 function closeModalRegistro(){ document.getElementById('modal-registro').classList.remove('active'); }
 
+/* Captura automática de las 3 vistas con heatmap para la memoria Word.
+   Fija cámara, heatMode y deformada → render → toDataURL. Restaura al final. */
+async function capture3DViews(R) {
+    const prevHeat = heatMode;
+    const prevDefl = deflScaleMult;
+    const prevShowDef = showDeformed;
+    const prevSph = { ...spherical };
+
+    const L_total = R.L_list.reduce((a,b)=>a+b,0);
+    const h_m = R.h/100;
+
+    // Vista estándar con un poco de zoom (más cercana que la default).
+    const niceView = {
+        theta: -0.55,
+        phi:   0.95,
+        radius: Math.max(6.5, L_total*1.25 + h_m*2),
+    };
+
+    const captures = { moment: null, shear: null, defl: null };
+
+    async function snap(mode, withDeformed) {
+        heatMode = mode;
+        showDeformed = !!withDeformed;
+        if (withDeformed) deflScaleMult = 300; // exagera deflexión para que se note
+        Object.assign(spherical, niceView);
+        updateCamPos();
+        buildSlab3D(R);
+        // Dos frames para asegurar que textures/geometry flushean
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        renderer3D.render(scene3D, camera3D);
+        const b64 = renderer3D.domElement.toDataURL('image/png');
+        return (b64 && b64.length > 500) ? b64 : null;
+    }
+
+    try {
+        captures.moment = await snap('moment', false);
+        captures.shear  = await snap('shear',  false);
+        captures.defl   = await snap('defl',   true);
+    } finally {
+        // Restaurar estado original para no sorprender al usuario
+        heatMode = prevHeat;
+        deflScaleMult = prevDefl;
+        showDeformed = prevShowDef;
+        Object.assign(spherical, prevSph);
+        updateCamPos();
+        buildSlab3D(R);
+    }
+    return captures;
+}
+
 async function doDescargarMemoria(){
     const nombre=document.getElementById('reg-nombre').value.trim();
     const empresa=document.getElementById('reg-empresa').value.trim();
@@ -794,12 +1114,36 @@ async function doDescargarMemoria(){
             body:JSON.stringify({nombre,empresa,correo,pais,proyecto,matricula,entrada:buildPayload()}),
         }).catch(e=>console.warn('Registro no enviado:',e));
 
+        // Screenshots 3D automáticos: momento, cortante, deflexión.
+        // El usuario no tiene que configurar nada — capturamos siempre las 3 vistas
+        // con heatmap y zoom estándar, luego restauramos el estado previo.
+        let screenshots_3d = null;
+        try {
+            if (resultado3D && !renderer3D) {
+                const tab3dBtn = document.querySelector('.tab-btn[data-tab="tab-3d"]');
+                const prev = document.querySelector('.tab-btn.active')?.dataset?.tab;
+                if (tab3dBtn) tab3dBtn.click();
+                init3DViewer(resultado3D);
+                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                if (prev && prev !== 'tab-3d') {
+                    document.querySelector(`.tab-btn[data-tab="${prev}"]`)?.click();
+                }
+            }
+            if (renderer3D && scene3D && camera3D && resultado3D) {
+                screenshots_3d = await capture3DViews(resultado3D);
+            }
+        } catch (err) { console.warn('screenshots 3D fallaron:', err); screenshots_3d = null; }
+
+        const resumen_optimizacion = (resultado && resultado.optimizacion) ? resultado.optimizacion : null;
+
         // Descarga
         const res=await fetch(`${API_BASE}/api/exportar_word`,{
             method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
                 entrada:{...buildPayload(), unidades},
                 proyecto:{nombre:empresa,matricula,proyecto,ubicacion:pais,fecha:''},
+                screenshots_3d,
+                resumen_optimizacion,
             }),
         });
         if(!res.ok) throw new Error('Error generando memoria Word');

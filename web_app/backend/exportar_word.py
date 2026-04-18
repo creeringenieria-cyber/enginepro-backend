@@ -489,7 +489,9 @@ class MemoriaWord:
         r.font.size = Pt(7.5); r.font.name = 'Arial'
         r.font.color.rgb = self.COL_GRAY
 
-    def generar(self, R, filepath, datos_proyecto):
+    def generar(self, R, filepath, datos_proyecto,
+                resumen_optimizacion=None, screenshot_3d_b64=None,
+                screenshots_3d=None):
         doc = DocxDocument()
 
         nombre    = datos_proyecto.get("nombre", EMPRESA)
@@ -781,6 +783,133 @@ class MemoriaWord:
             import traceback; traceback.print_exc()
             self._para(doc, f"[Error generando sección: {e}]", italic=True, color=self.COL_GRAY)
 
+        # ══════════ 10. OPTIMIZACIÓN ECONÓMICA (opcional) ══════════
+        path_screenshot = None
+        screenshot_paths = []
+        if resumen_optimizacion:
+            doc.add_page_break()
+            self._heading(doc, "10. OPTIMIZACIÓN ECONÓMICA — AUTO-CALCULAR")
+            self._para(doc,
+                "El diseño presentado fue obtenido mediante un barrido automático sobre espesor "
+                "constructivo (múltiplos de 1 cm) y mallas electrosoldadas comerciales, minimizando "
+                "el costo total (concreto + acero) sujeto al cumplimiento simultáneo de los 11 "
+                "estados límite NSR-10 / ACI 318.",
+                size=9.5, space_after=8)
+
+            mejor = resumen_optimizacion.get("mejor", {}) or {}
+            costo = mejor.get("costo", {}) or {}
+            precios = resumen_optimizacion.get("precios", {}) or {}
+            h_min_nsr = resumen_optimizacion.get("h_min_nsr", "-")
+            h_range = resumen_optimizacion.get("h_range", [None, None]) or [None, None]
+            area = resumen_optimizacion.get("area_losa_m2", 0)
+            explorados = resumen_optimizacion.get("explorados", 0)
+
+            doc.add_heading("10.1  Parámetros de la optimización", level=2)
+            self._table(doc, ["Parámetro", "Valor"],
+                [["Rango de espesor explorado",
+                  f"h ∈ [{h_range[0]}, {h_range[1]}] cm — paso 1 cm"],
+                 ["h mínimo NSR-10 (Tabla C.9.5a)", f"{h_min_nsr} cm"],
+                 ["Área de análisis", f"{area:.2f} m² (franja de 1 m × Σ luces)"],
+                 ["Precio unitario concreto", f"$ {precios.get('concreto_m3', 0):,.0f} COP/m³"],
+                 ["Precio unitario acero", f"$ {precios.get('acero_kg', 0):,.0f} COP/kg"],
+                 ["Factor desperdicio acero",
+                  f"{precios.get('factor_desperdicio_acero', 1.15):.2f} "
+                  "(traslapos y mermas)"],
+                 ["Combinaciones evaluadas", f"{explorados}"]],
+                [6.5, 11.5])
+            doc.add_paragraph().paragraph_format.space_after = Pt(8)
+
+            doc.add_heading("10.2  Diseño óptimo seleccionado", level=2)
+            self._table(doc, ["Variable de diseño", "Valor óptimo"],
+                [["Espesor h", f"{mejor.get('h','-')} cm"],
+                 ["Malla inferior (As = " f"{mejor.get('as_inf',0):.2f} cm²/m)",
+                  str(mejor.get('malla_inf', '-'))],
+                 ["Malla superior (As = " f"{mejor.get('as_sup',0):.2f} cm²/m)",
+                  str(mejor.get('malla_sup', '-'))],
+                 ["Volumen de concreto", f"{costo.get('vol_concreto_m3', 0):.3f} m³"],
+                 ["Peso de acero (con desperdicio)",
+                  f"{costo.get('peso_acero_kg', 0):,.2f} kg "
+                  f"({costo.get('peso_acero_kg_m2', 0):.2f} kg/m²)"],
+                 ["Costo concreto", f"$ {costo.get('costo_concreto', 0):,.0f} COP"],
+                 ["Costo acero", f"$ {costo.get('costo_acero', 0):,.0f} COP"],
+                 ["COSTO TOTAL", f"$ {costo.get('costo_total', 0):,.0f} COP"]],
+                [7.5, 10.5])
+            doc.add_paragraph().paragraph_format.space_after = Pt(8)
+
+            historial = resumen_optimizacion.get("historial", []) or []
+            cumplientes = [r for r in historial if r.get("estado") == "CUMPLE"]
+            if cumplientes:
+                doc.add_heading("10.3  Alternativas cumplientes exploradas", level=2)
+                rows = []
+                for r in cumplientes[:15]:
+                    rows.append([
+                        f"{r.get('h','-')} cm",
+                        str(r.get('malla_inf', '-'))[:28],
+                        str(r.get('malla_sup', '-'))[:28],
+                        f"$ {r.get('costo_total', 0):,.0f}",
+                    ])
+                self._table(doc, ["h", "Malla inferior", "Malla superior", "Costo total (COP)"],
+                            rows, [1.8, 6, 6, 4])
+                self._ref(doc,
+                    "Ordenadas por espesor. El algoritmo selecciona la combinación cumpliente "
+                    "de menor costo (ver fila destacada en §10.2).")
+
+        # ══════════ 11. VISUALIZACIÓN 3D — MAPAS DE CALOR ══════════
+        # Acepta dict {moment, shear, defl} → agrega una figura por vista con título.
+        # Fallback a screenshot_3d_b64 (captura única) si no vino el dict.
+        screenshot_paths = []
+
+        def _decode_b64_png(b64, suffix):
+            import base64
+            s = b64.split(",", 1)[1] if b64.startswith("data:") else b64
+            p = os.path.join(tmpdir, f"creer_3d_{_uid}_{suffix}.png")
+            with open(p, "wb") as f:
+                f.write(base64.b64decode(s))
+            return p
+
+        vistas = []
+        if screenshots_3d and isinstance(screenshots_3d, dict):
+            labels = [
+                ("moment", "Demanda de Momento |M| — rojo: mayor exigencia flexional"),
+                ("shear",  "Demanda de Cortante |V| — rojo: zonas críticas de cortante"),
+                ("defl",   "Deformada (escala exagerada) — distribución de deflexión"),
+            ]
+            for key, titulo in labels:
+                img_b64 = screenshots_3d.get(key)
+                if img_b64:
+                    try:
+                        vistas.append((titulo, _decode_b64_png(img_b64, key)))
+                    except Exception as e:
+                        import traceback; traceback.print_exc()
+        elif screenshot_3d_b64:
+            try:
+                vistas.append(("Modelo tridimensional", _decode_b64_png(screenshot_3d_b64, "single")))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+
+        if vistas:
+            try:
+                doc.add_page_break()
+                self._heading(doc, "11. VISUALIZACIÓN 3D DEL MODELO")
+                self._para(doc,
+                    "Mapas de calor sobre el modelo tridimensional. La escala de color "
+                    "va de azul (menor demanda) a rojo (mayor demanda). La deformada "
+                    "está escalada para visibilidad y no representa la deflexión real.",
+                    size=9.5, space_after=10)
+                for i, (titulo, path) in enumerate(vistas):
+                    if i > 0:
+                        doc.add_paragraph()
+                    self._para(doc, titulo, bold=True, size=10.5,
+                               color=self.COL_ACCENT, space_after=4)
+                    p = doc.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.add_run().add_picture(path, width=Cm(16))
+                screenshot_paths.extend(p for _, p in vistas)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                self._para(doc, f"[Error incluyendo visualización 3D: {e}]",
+                           italic=True, color=self.COL_GRAY)
+
         # Pie final
         doc.add_paragraph()
         self._para(doc, f"Documento generado el {fecha} por EnginePro Losas v{VERSION} — {nombre}",
@@ -788,7 +917,11 @@ class MemoriaWord:
 
         doc.save(filepath)
 
-        for pf in [path_diag, path_sec]:
+        cleanup_paths = [path_diag, path_sec]
+        if path_screenshot:
+            cleanup_paths.append(path_screenshot)
+        cleanup_paths.extend(screenshot_paths)
+        for pf in cleanup_paths:
             try:
                 if os.path.exists(pf): os.remove(pf)
             except Exception: pass

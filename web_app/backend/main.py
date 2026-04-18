@@ -24,6 +24,12 @@ from .motor import (
     MALLAS, GRAFILES, CASETONES, VERSION, EMPRESA,
     MotorEstructural, ResultadosLosa
 )
+from .optimizador import (
+    optimizar_losa,
+    PRECIO_CONCRETO_M3_DEFAULT,
+    PRECIO_ACERO_KG_DEFAULT,
+    EXTRA_CM_DEFAULT,
+)
 
 app = FastAPI(title="EnginePro Losas · CRÉER Ingeniería", version=VERSION)
 
@@ -89,6 +95,25 @@ class DatosProyecto(BaseModel):
 class ExportRequest(BaseModel):
     entrada: DatosEntrada
     proyecto: DatosProyecto
+    screenshot_3d: Optional[str] = None            # base64 PNG (data URL o bruto) — legado
+    screenshots_3d: Optional[dict] = None          # {moment, shear, defl} → base64
+    resumen_optimizacion: Optional[dict] = None    # payload devuelto por /api/optimizar
+
+
+class OptimizarRequest(BaseModel):
+    """
+    Entrada del optimizador. h, malla_sup, malla_inf, grafil_* NO se usan
+    (los fija el optimizador). Los demás campos definen el problema.
+    """
+    luces: List[float] = Field(default=[4.0])
+    fc: float = 21.0
+    fy: float = 420.0
+    cv: float = 180.0
+    cm_adic: float = 150.0
+    precio_concreto_m3: float = PRECIO_CONCRETO_M3_DEFAULT
+    precio_acero_kg: float = PRECIO_ACERO_KG_DEFAULT
+    extra_cm: int = EXTRA_CM_DEFAULT
+    historial_completo: bool = False
 
 
 class RegistroDescarga(BaseModel):
@@ -207,6 +232,51 @@ def api_calcular(datos: DatosEntrada):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ── Optimización económica ──
+@app.post("/api/optimizar")
+def api_optimizar(req: OptimizarRequest):
+    try:
+        entrada_base = {
+            "tipo_losa": "Maciza",
+            "luces": req.luces,
+            "h": 0.0,          # sobreescrito por el optimizador
+            "fc": req.fc,
+            "fy": req.fy,
+            "cv": req.cv,
+            "cm_adic": req.cm_adic,
+            "malla_sup": "",
+            "grafil_sup": "Sin Grafil",
+            "malla_inf": "",
+            "grafil_inf": "Sin Grafil",
+        }
+        opt = optimizar_losa(
+            entrada_base,
+            precio_concreto_m3=req.precio_concreto_m3,
+            precio_acero_kg=req.precio_acero_kg,
+            extra_cm=req.extra_cm,
+            historial_completo=req.historial_completo,
+        )
+        if not opt.get("ok"):
+            return opt
+
+        # Cálculo final completo con el diseño óptimo para alimentar UI/3D.
+        R = calcular_losa(opt["entrada_final"])
+        resultado = resultado_a_dict(R)
+        resultado["optimizacion"] = {
+            "mejor": opt["mejor"],
+            "h_min_nsr": opt["h_min_nsr"],
+            "h_range": opt["h_range"],
+            "explorados": opt["explorados"],
+            "historial": opt["historial"],
+            "precios": opt["precios"],
+            "area_losa_m2": opt["area_losa_m2"],
+        }
+        return resultado
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ── Registro descarga + email ──
 @app.post("/api/registrar_descarga")
 async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
@@ -233,7 +303,12 @@ def api_exportar_word(req: ExportRequest, background: BackgroundTasks):
         tmpfile.close()
 
         gen = MemoriaWord()
-        gen.generar(R, tmpfile.name, proy)
+        gen.generar(
+            R, tmpfile.name, proy,
+            resumen_optimizacion=req.resumen_optimizacion,
+            screenshot_3d_b64=req.screenshot_3d,
+            screenshots_3d=req.screenshots_3d,
+        )
 
         def _cleanup(path):
             try:
@@ -260,6 +335,9 @@ if os.path.isdir(_css_dir):
     app.mount("/css", StaticFiles(directory=_css_dir), name="css")
 if os.path.isdir(_js_dir):
     app.mount("/js",  StaticFiles(directory=_js_dir),  name="js")
+_img_dir = os.path.join(FRONTEND_DIR, "images")
+if os.path.isdir(_img_dir):
+    app.mount("/images", StaticFiles(directory=_img_dir), name="images")
 
 
 def _find_logo():

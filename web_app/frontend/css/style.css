@@ -688,15 +688,17 @@ body {
 
 .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 
-/* ── VIEWER 3D ── */
+/* ── VIEWER 3D (Cyberpunk Holographic Lab) ── */
 .viewer3d-wrap { padding: 0; position: relative; }
 
 #viewer-3d {
   width: 100%;
   height: 480px;
   cursor: grab;
-  background: linear-gradient(180deg, #0a0c18 0%, #0d1022 100%);
+  background: #030308;
   border-radius: var(--radius);
+  border: 1px solid rgba(0,229,255,0.12);
+  box-shadow: 0 0 40px rgba(0,229,255,0.06), inset 0 0 60px rgba(0,0,0,0.5);
 }
 
 #viewer-3d:active { cursor: grabbing; }
@@ -713,19 +715,19 @@ body {
 
 .v3d-btn {
   width: 34px; height: 34px;
-  background: rgba(10,11,15,0.85);
-  border: 1px solid var(--border2);
+  background: rgba(3,3,8,0.85);
+  border: 1px solid rgba(0,229,255,0.25);
   border-radius: 6px;
-  color: var(--txt2);
+  color: #8899bb;
   font-size: 1rem;
   cursor: pointer;
   display: flex;align-items:center;justify-content:center;
-  transition: all 0.15s;
+  transition: all 0.2s;
   backdrop-filter: blur(8px);
 }
 
-.v3d-btn:hover { background: var(--red); color:#fff; border-color:var(--red); }
-.v3d-btn.active { background: var(--red); color:#fff; border-color:var(--red); }
+.v3d-btn:hover { background: #00e5ff; color:#030308; border-color:#00e5ff; box-shadow: 0 0 14px rgba(0,229,255,0.4); }
+.v3d-btn.active { background: #00e5ff; color:#030308; border-color:#00e5ff; box-shadow: 0 0 18px rgba(0,229,255,0.5); }
 
 .viewer3d-legend {
   position: absolute;
@@ -733,8 +735,8 @@ body {
   left: 0.75rem;
   display: flex;
   gap: 0.75rem;
-  background: rgba(10,11,15,0.85);
-  border: 1px solid var(--border);
+  background: rgba(3,3,8,0.85);
+  border: 1px solid rgba(0,229,255,0.18);
   border-radius: 6px;
   padding: 0.4rem 0.75rem;
   backdrop-filter: blur(8px);
@@ -745,8 +747,8 @@ body {
   position: absolute;
   top: 0.75rem; left: 0.75rem;
   display: flex; align-items: center; gap: 0.35rem;
-  background: rgba(10,11,15,0.85);
-  border: 1px solid var(--border);
+  background: rgba(3,3,8,0.85);
+  border: 1px solid rgba(0,229,255,0.18);
   border-radius: 8px;
   padding: 0.35rem 0.6rem;
   backdrop-filter: blur(8px);
@@ -754,7 +756,7 @@ body {
 }
 .heat-label {
   font-family: var(--display); font-size: 0.7rem;
-  color: var(--txt3); letter-spacing: 0.08em;
+  color: #6688aa; letter-spacing: 0.08em;
   text-transform: uppercase; margin-right: 2px;
 }
 .heat-btn {
@@ -766,54 +768,54 @@ body {
 .heat-slider {
   -webkit-appearance: none; appearance: none;
   width: 90px; height: 4px;
-  background: var(--bg2); border-radius: 4px;
-  outline: none; border: 1px solid var(--border2);
+  background: #0a0a18; border-radius: 4px;
+  outline: none; border: 1px solid rgba(0,229,255,0.2);
 }
 .heat-slider::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 12px; height: 12px;
-  background: var(--red); border-radius: 50%;
+  background: #00e5ff; border-radius: 50%;
   cursor: pointer;
 }
 .heat-slider::-moz-range-thumb {
   width: 12px; height: 12px;
-  background: var(--red); border-radius: 50%;
+  background: #00e5ff; border-radius: 50%;
   cursor: pointer; border: none;
 }
 .heat-val {
   font-family: var(--mono); font-size: 0.7rem;
-  color: var(--txt2); min-width: 40px;
+  color: #8899bb; min-width: 40px;
 }
 
 /* Leyenda del heatmap (degradado + extremos) */
 .viewer3d-heatlegend {
   position: absolute;
   bottom: 0.75rem; right: 0.75rem;
-  background: rgba(10,11,15,0.85);
-  border: 1px solid var(--border);
+  background: rgba(3,3,8,0.85);
+  border: 1px solid rgba(0,229,255,0.18);
   border-radius: 8px;
   padding: 0.55rem 0.75rem;
   backdrop-filter: blur(8px);
   font-family: var(--mono); font-size: 0.68rem;
-  color: var(--txt2); min-width: 180px; z-index: 10;
+  color: #8899bb; min-width: 180px; z-index: 10;
 }
 .viewer3d-heatlegend .hl-title {
   font-family: var(--display); font-size: 0.72rem;
-  color: var(--txt); letter-spacing: 0.06em;
+  color: #00e5ff; letter-spacing: 0.06em;
   text-transform: uppercase; margin-bottom: 0.35rem;
 }
 .viewer3d-heatlegend .hl-bar {
   height: 10px; border-radius: 3px;
   background: linear-gradient(90deg,
-    #3B82F6 0%, #10B981 33%, #F59E0B 66%, #E03030 100%);
+    #00e5ff 0%, #10B981 33%, #F59E0B 66%, #ff44aa 100%);
   margin-bottom: 0.3rem;
 }
 .viewer3d-heatlegend .hl-ticks {
   display: flex; justify-content: space-between;
-  font-size: 0.65rem; color: var(--txt3);
+  font-size: 0.65rem; color: #556688;
 }
 
-.leg-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.7rem; color: var(--txt2); }
+.leg-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.7rem; color: #8899bb; }
 
 .leg-dot {
   width: 10px; height: 10px;
@@ -821,9 +823,9 @@ body {
   display: inline-block;
 }
 
-.sup-dot { background: #3b82f6; box-shadow: 0 0 6px #3b82f6; }
-.inf-dot { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
-.conc-dot { background: #64748b; }
+.sup-dot { background: #ff8c00; box-shadow: 0 0 6px #ff8c00; }
+.inf-dot { background: #00e5ff; box-shadow: 0 0 6px #00e5ff; }
+.conc-dot { background: #8899bb; box-shadow: 0 0 6px #8899bb; }
 
 /* ── SECTION SVG ── */
 .section-svg-container {

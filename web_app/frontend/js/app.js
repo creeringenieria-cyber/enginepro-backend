@@ -601,39 +601,103 @@ function dimV(x,y1,y2,label,col){const aw=3,ah=5;let s='';
     s+=`<text x="${x+9}" y="${(y1+y2)/2+4}" fill="${col}" font-size="9.5" font-family="Inter,sans-serif" font-weight="500">${label}</text>`;return s;}
 
 /* ═══════════════════════════════════════════════════════
-   THREE.JS 3D VIEWER
+   THREE.JS 3D VIEWER — Cyberpunk Holographic Lab
    ═══════════════════════════════════════════════════════ */
+
+/* ── Global refs for animation ── */
+let pulsingLight = null;
+let particlesGroup = null;
+let holoTime = 0;
+
 function init3DViewer(R) {
     const container = document.getElementById('viewer-3d');
     if(!container) return;
     if(renderer3D){ renderer3D.dispose(); renderer3D=null; if(animFrameId) cancelAnimationFrame(animFrameId); }
     container.innerHTML='';
+    pulsingLight = null;
+    particlesGroup = null;
+    holoTime = 0;
 
     const W=container.clientWidth||800, H=container.clientHeight||480;
+
+    /* ── Scene & Background ── */
     scene3D = new THREE.Scene();
-    scene3D.background = new THREE.Color(0x0a0c18);
-    scene3D.fog = new THREE.Fog(0x0a0c18,25,70);
+    scene3D.background = new THREE.Color('#030308');
+    scene3D.fog = new THREE.FogExp2('#030308', 0.0008);
 
     camera3D = new THREE.PerspectiveCamera(45,W/H,0.1,200);
     updateCamPos();
 
+    /* ── Renderer with ACES tone mapping ── */
     renderer3D = new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
     renderer3D.setSize(W,H);
     renderer3D.setPixelRatio(Math.min(window.devicePixelRatio,2));
     renderer3D.shadowMap.enabled = true;
     renderer3D.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer3D.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer3D.toneMappingExposure = 1.1;
     container.appendChild(renderer3D.domElement);
 
-    // Lights
-    scene3D.add(new THREE.AmbientLight(0xffffff,0.4));
-    const dl = new THREE.DirectionalLight(0xffffff,1.1);
-    dl.position.set(8,14,8); dl.castShadow=true; dl.shadow.mapSize.set(2048,2048); scene3D.add(dl);
-    const fl = new THREE.DirectionalLight(0x3B82F6,0.25); fl.position.set(-6,4,-4); scene3D.add(fl);
-    const rl = new THREE.PointLight(0xE03030,0.4,30); rl.position.set(0,6,-8); scene3D.add(rl);
+    /* ── Cinematic 3-Point Lighting ── */
+    // Ambient — dark blue wash
+    scene3D.add(new THREE.AmbientLight('#1a1a3a', 0.4));
 
-    // Grid
-    const grid = new THREE.GridHelper(50,50,0x1a1f35,0x161928);
-    grid.position.y=-0.05; scene3D.add(grid);
+    // Hemisphere — sky/ground gradient
+    const hemi = new THREE.HemisphereLight('#334466', '#0a0a18', 0.5);
+    scene3D.add(hemi);
+
+    // Key light — warm white directional, hard shadows
+    const keyLight = new THREE.DirectionalLight('#ffeedd', 2.5);
+    keyLight.position.set(4, 10, 6);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 80;
+    keyLight.shadow.camera.left = -15;
+    keyLight.shadow.camera.right = 15;
+    keyLight.shadow.camera.top = 10;
+    keyLight.shadow.camera.bottom = -5;
+    keyLight.shadow.bias = -0.0001;
+    keyLight.shadow.normalBias = 0.02;
+    scene3D.add(keyLight);
+
+    // Fill light — cool blue
+    const fillLight = new THREE.DirectionalLight('#3355aa', 0.6);
+    fillLight.position.set(-3, 2, -3);
+    scene3D.add(fillLight);
+
+    // Rim light — pulsing magenta point
+    pulsingLight = new THREE.PointLight('#ff44aa', 2.5, 20);
+    pulsingLight.position.set(1, 3, -6);
+    scene3D.add(pulsingLight);
+
+    // Accent light — intense cyan
+    const accentLight = new THREE.PointLight('#00e5ff', 1.2, 12);
+    accentLight.position.set(2, 0.3, -2);
+    scene3D.add(accentLight);
+
+    /* ── Holographic Grids ── */
+    buildHoloGrids(scene3D);
+
+    /* ── Reflective Dark Floor ── */
+    const floorGeo = new THREE.PlaneGeometry(60, 60);
+    const floorMat = new THREE.MeshStandardMaterial({
+        color: '#0a0a18',
+        roughness: 0.5,
+        metalness: 0.7,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.25;
+    floor.receiveShadow = true;
+    floor.userData.persistent = true;
+    scene3D.add(floor);
+
+    /* ── Floating Particles ── */
+    particlesGroup = buildParticles(scene3D);
 
     buildSlab3D(R);
     setupMouseControls3D(container);
@@ -643,7 +707,157 @@ function init3DViewer(R) {
         camera3D.aspect=w/h; camera3D.updateProjectionMatrix(); renderer3D.setSize(w,h);
     }).observe(container);
 
-    (function animate(){ animFrameId=requestAnimationFrame(animate); renderer3D.render(scene3D,camera3D); })();
+    /* ── Animate with pulsing & particles ── */
+    (function animate(ts){
+        animFrameId = requestAnimationFrame(animate);
+        holoTime = (ts || 0) * 0.001;
+
+        // Pulse rim light sinusoidally
+        if (pulsingLight) {
+            pulsingLight.intensity = 2.5 + Math.sin(holoTime * 2.3) * 0.8;
+        }
+
+        // Animate particles floating up
+        if (particlesGroup) {
+            const pos = particlesGroup.geometry.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                let y = pos.getY(i);
+                y += 0.003;
+                if (y > 8) y = -2;
+                pos.setY(i, y);
+            }
+            pos.needsUpdate = true;
+            // Slow rotation
+            particlesGroup.rotation.y += 0.0004;
+            particlesGroup.rotation.x += 0.00015;
+        }
+
+        renderer3D.render(scene3D, camera3D);
+    })();
+}
+
+/* ── Holographic Grids ── */
+function buildHoloGrids(scene) {
+    const size = 40;
+    const half = size / 2;
+
+    // Coarse grid — cyan, dark subdivisions
+    const coarseG = new THREE.Group();
+    const coarseDiv = 2.0; // 2m spacing
+    const nCoarse = Math.floor(size / coarseDiv);
+
+    const coarsePts = [];
+    for (let i = -nCoarse; i <= nCoarse; i++) {
+        const p = i * coarseDiv;
+        if (Math.abs(p) > half) continue;
+        coarsePts.push(new THREE.Vector3(p, 0.005, -half));
+        coarsePts.push(new THREE.Vector3(p, 0.005, half));
+        coarsePts.push(new THREE.Vector3(-half, 0.005, p));
+        coarsePts.push(new THREE.Vector3(half, 0.005, p));
+    }
+    const coarseGeo = new THREE.BufferGeometry().setFromPoints(coarsePts);
+    const coarseMat = new THREE.LineBasicMaterial({
+        color: '#00e5ff',
+        transparent: true,
+        opacity: 0.25,
+        depthWrite: false,
+    });
+    coarseG.add(new THREE.LineSegments(coarseGeo, coarseMat));
+
+    // Fine subdivisions within coarse (dark accents)
+    const finePts = [];
+    const fineDiv = 0.5;
+    const nFine = Math.floor(size / fineDiv);
+    for (let i = -nFine; i <= nFine; i++) {
+        const p = i * fineDiv;
+        if (Math.abs(p) > half) continue;
+        // Skip if it coincides with coarse grid
+        if (Math.abs(p % coarseDiv) < 0.01) continue;
+        finePts.push(new THREE.Vector3(p, 0.003, -half));
+        finePts.push(new THREE.Vector3(p, 0.003, half));
+        finePts.push(new THREE.Vector3(-half, 0.003, p));
+        finePts.push(new THREE.Vector3(half, 0.003, p));
+    }
+    if (finePts.length > 0) {
+        const fineGeo = new THREE.BufferGeometry().setFromPoints(finePts);
+        const fineMat = new THREE.LineBasicMaterial({
+            color: '#112233',
+            transparent: true,
+            opacity: 0.25,
+            depthWrite: false,
+        });
+        coarseG.add(new THREE.LineSegments(fineGeo, fineMat));
+    }
+    scene.add(coarseG);
+
+    // Fine grid — subtle overlay (#334466 / #0a0a1a)
+    const fineG = new THREE.Group();
+    const fine2Div = 0.2;
+    const nFine2 = Math.floor(size / fine2Div);
+    const fine2Pts = [];
+    for (let i = -nFine2; i <= nFine2; i++) {
+        const p = i * fine2Div;
+        if (Math.abs(p) > half) continue;
+        fine2Pts.push(new THREE.Vector3(p, 0.006, -half));
+        fine2Pts.push(new THREE.Vector3(p, 0.006, half));
+        fine2Pts.push(new THREE.Vector3(-half, 0.006, p));
+        fine2Pts.push(new THREE.Vector3(half, 0.006, p));
+    }
+    const fine2Geo = new THREE.BufferGeometry().setFromPoints(fine2Pts);
+    const fine2Mat = new THREE.LineBasicMaterial({
+        color: '#334466',
+        transparent: true,
+        opacity: 0.12,
+        depthWrite: false,
+    });
+    fineG.add(new THREE.LineSegments(fine2Geo, fine2Mat));
+
+    // Fine grid dark accents (#0a0a1a)
+    const fine2bPts = [];
+    for (let i = -nFine2; i <= nFine2; i++) {
+        const p = i * fine2Div + fine2Div / 2;
+        if (Math.abs(p) > half) continue;
+        fine2bPts.push(new THREE.Vector3(p, 0.004, -half));
+        fine2bPts.push(new THREE.Vector3(p, 0.004, half));
+        fine2bPts.push(new THREE.Vector3(-half, 0.004, p));
+        fine2bPts.push(new THREE.Vector3(half, 0.004, p));
+    }
+    if (fine2bPts.length > 0) {
+        const fine2bGeo = new THREE.BufferGeometry().setFromPoints(fine2bPts);
+        const fine2bMat = new THREE.LineBasicMaterial({
+            color: '#0a0a1a',
+            transparent: true,
+            opacity: 0.12,
+            depthWrite: false,
+        });
+        fineG.add(new THREE.LineSegments(fine2bGeo, fine2bMat));
+    }
+    scene.add(fineG);
+}
+
+/* ── Floating Particles ── */
+function buildParticles(scene) {
+    const count = 200;
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        positions[i * 3]     = (Math.random() - 0.5) * 20;
+        positions[i * 3 + 1] = Math.random() * 8 - 2;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const mat = new THREE.PointsMaterial({
+        color: '#00e5ff',
+        size: 0.015,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.7,
+    });
+    const pts = new THREE.Points(geo, mat);
+    scene.add(pts);
+    return pts;
 }
 
 function buildSlab3D(R) {
@@ -657,106 +871,318 @@ function buildSlab3D(R) {
     const width = 3.0;
     const cx = -L_total/2;
 
-    /* ── CONCRETE — geometría segmentada para heatmap por vertex colors ── */
-    const N_SEG = 80;  // segmentos longitudinales (suaviza el degradado)
+    /* ═══════════════════════════════════════════════
+       SLAB — smoked translucent glass + heatmap
+       ═══════════════════════════════════════════════ */
+    const N_SEG = 80;
     const geomConc = new THREE.BoxGeometry(L_total, h_m, width, N_SEG, 1, 1);
-    applyHeatmapColors(geomConc, R, L_total);
-    const matConc = new THREE.MeshStandardMaterial({
-        color: heatMode === 'none' ? 0xB8BEC9 : 0xFFFFFF,
-        vertexColors: heatMode !== 'none',
-        roughness: 0.72, metalness: 0.04,
-        transparent: true,
-        opacity: heatMode === 'none' ? 0.62 : 0.88,
-        depthWrite: false,
-    });
-    meshConcrete = new THREE.Mesh(geomConc, matConc);
-    meshConcrete.position.set(cx+L_total/2, h_m/2, 0);
-    meshConcrete.castShadow=true; meshConcrete.receiveShadow=true;
-    meshConcrete.userData.slab=true;
-    scene3D.add(meshConcrete);
 
-    /* Subtle edge lines only on outer border */
-    const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(L_total, h_m, width, 1, 1, 1));
-    const edgeMat = new THREE.LineBasicMaterial({color:0x4A5568,transparent:true,opacity:0.4});
-    const edgeLines = new THREE.LineSegments(edgeGeo,edgeMat);
-    meshConcrete.add(edgeLines);
+    // Heatmap vertex colors (when active)
+    applyHeatmapColors(geomConc, R, L_total);
+
+    if (heatMode === 'none') {
+        // Cyberpunk smoked glass
+        const matConc = new THREE.MeshStandardMaterial({
+            color: '#8899bb',
+            roughness: 0.25,
+            metalness: 0.15,
+            transparent: true,
+            opacity: 0.45,
+            depthWrite: false,
+        });
+        meshConcrete = new THREE.Mesh(geomConc, matConc);
+
+        /* ── Inner wireframe — subtle cyan cage ── */
+        const wfGeo = new THREE.BoxGeometry(L_total * 0.998, h_m * 0.998, width * 0.998, 8, 2, 6);
+        const wfMat = new THREE.MeshBasicMaterial({
+            color: '#00e5ff',
+            wireframe: true,
+            transparent: true,
+            opacity: 0.06,
+            depthWrite: false,
+        });
+        const wireframeMesh = new THREE.Mesh(wfGeo, wfMat);
+        wireframeMesh.userData.slab = true; // cleaned up separately below
+        meshConcrete.add(wireframeMesh);
+
+        /* ── Double neon border ── */
+        // Outer cyan edge
+        const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(L_total, h_m, width, 1, 1, 1));
+        const edgeCyanMat = new THREE.LineBasicMaterial({
+            color: '#00e5ff',
+            transparent: true,
+            opacity: 0.3,
+            depthWrite: false,
+        });
+        meshConcrete.add(new THREE.LineSegments(edgeGeo, edgeCyanMat));
+
+        // Second magenta halo (slightly larger)
+        const haloScale = 1.012;
+        const haloGeo = new THREE.EdgesGeometry(
+            new THREE.BoxGeometry(L_total * haloScale, h_m * haloScale, width * haloScale, 1, 1, 1)
+        );
+        const haloMagentaMat = new THREE.LineBasicMaterial({
+            color: '#ff44aa',
+            transparent: true,
+            opacity: 0.12,
+            depthWrite: false,
+        });
+        meshConcrete.add(new THREE.LineSegments(haloGeo, haloMagentaMat));
+    } else {
+        // Heatmap mode: vibrant glass
+        const matConc = new THREE.MeshStandardMaterial({
+            color: 0xFFFFFF,
+            vertexColors: true,
+            roughness: 0.3,
+            metalness: 0.08,
+            transparent: true,
+            opacity: 0.88,
+            depthWrite: false,
+        });
+        meshConcrete = new THREE.Mesh(geomConc, matConc);
+
+        // Subtle neon border for heatmap mode too
+        const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(L_total, h_m, width, 1, 1, 1));
+        const edgeMat = new THREE.LineBasicMaterial({
+            color: '#00e5ff',
+            transparent: true,
+            opacity: 0.18,
+            depthWrite: false,
+        });
+        meshConcrete.add(new THREE.LineSegments(edgeGeo, edgeMat));
+    }
+
+    meshConcrete.position.set(cx+L_total/2, h_m/2, 0);
+    meshConcrete.castShadow = true;
+    meshConcrete.receiveShadow = true;
+    meshConcrete.userData.slab = true;
+    scene3D.add(meshConcrete);
 
     /* Actualiza leyenda del heatmap */
     updateHeatLegend(R);
 
-    /* ── SUPPORTS ── */
-    let apoyosX=[0];
-    R.L_list.forEach(L=>{ apoyosX.push(apoyosX[apoyosX.length-1]+L); });
-    apoyosX.forEach(xa=>{
-        const sg=new THREE.BoxGeometry(0.10,0.30,width+0.15);
-        const sm=new THREE.MeshStandardMaterial({color:0x334155,roughness:0.85});
-        const s=new THREE.Mesh(sg,sm); s.position.set(cx+xa,-0.15,0);
-        s.userData.slab=true; scene3D.add(s);
+    /* ═══════════════════════════════════════════════
+       PEDESTALS — metallic with soft edges
+       ═══════════════════════════════════════════════ */
+    let apoyosX = [0];
+    R.L_list.forEach(L => { apoyosX.push(apoyosX[apoyosX.length-1] + L); });
+    apoyosX.forEach(xa => {
+        const sg = new THREE.BoxGeometry(0.10, 0.30, width + 0.15);
+        const sm = new THREE.MeshStandardMaterial({
+            color: '#667788',
+            roughness: 0.35,
+            metalness: 0.8,
+        });
+        const s = new THREE.Mesh(sg, sm);
+        s.position.set(cx + xa, -0.15, 0);
+        s.castShadow = true;
+        s.receiveShadow = true;
+        s.userData.slab = true;
+
+        // Soft edge lines on pedestal
+        const pedEdgeGeo = new THREE.EdgesGeometry(sg);
+        const pedEdgeMat = new THREE.LineBasicMaterial({
+            color: '#889999',
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false,
+        });
+        s.add(new THREE.LineSegments(pedEdgeGeo, pedEdgeMat));
+
+        scene3D.add(s);
     });
 
-    /* ── REBAR BARS ── */
-    barsGroup = new THREE.Group(); barsGroup.userData.slab=true;
-    const cover=0.03;
-    const y_inf=cover, y_sup=h_m-cover;
-    const db_inf=(R.db_malla_inf||5)/1000, db_sup=(R.db_malla_sup||4)/1000;
-    const db_gi=(R.db_grafil_inf||0)/1000, db_gs=(R.db_grafil_sup||0)/1000;
+    /* ═══════════════════════════════════════════════
+       REBAR — high-reflectivity cyberpunk cylinders
+       Colors: cyan, orange, magenta, bluish-white
+       ═══════════════════════════════════════════════ */
+    barsGroup = new THREE.Group();
+    barsGroup.userData.slab = true;
+    const cover = 0.03;
+    const y_inf = cover, y_sup = h_m - cover;
+    const db_inf = (R.db_malla_inf || 5) / 1000;
+    const db_sup = (R.db_malla_sup || 4) / 1000;
+    const db_gi = (R.db_grafil_inf || 0) / 1000;
+    const db_gs = (R.db_grafil_sup || 0) / 1000;
 
-    const matInf=new THREE.MeshStandardMaterial({color:0xEF4444,roughness:0.25,metalness:0.9,emissive:0x2D0000});
-    const matSup=new THREE.MeshStandardMaterial({color:0x3B82F6,roughness:0.25,metalness:0.9,emissive:0x00102D});
-    const matGrf=new THREE.MeshStandardMaterial({color:0xF59E0B,roughness:0.3,metalness:0.85});
+    // Cyberpunk rebar materials (metalness 0.95, roughness 0.2)
+    const matInf = new THREE.MeshStandardMaterial({
+        color: '#00e5ff',          // cyan
+        roughness: 0.2,
+        metalness: 0.95,
+        emissive: '#003344',
+    });
+    const matSup = new THREE.MeshStandardMaterial({
+        color: '#ff8c00',          // electric orange
+        roughness: 0.2,
+        metalness: 0.95,
+        emissive: '#331100',
+    });
+    const matGrf = new THREE.MeshStandardMaterial({
+        color: '#ff44aa',          // magenta
+        roughness: 0.2,
+        metalness: 0.95,
+        emissive: '#220022',
+    });
+    const matTrans = new THREE.MeshStandardMaterial({
+        color: '#88ccff',          // bluish white
+        roughness: 0.2,
+        metalness: 0.95,
+        emissive: '#001122',
+    });
 
-    // Use real separation from result
-    const sep_inf = (R.sep_malla_inf||15)/100;   // cm→m
-    const sep_sup = (R.sep_malla_sup||15)/100;
-    const nLong_inf = Math.max(3, Math.round(width/sep_inf));
-    const nLong_sup = Math.max(3, Math.round(width/sep_sup));
+    const sep_inf = (R.sep_malla_inf || 15) / 100;
+    const sep_sup = (R.sep_malla_sup || 15) / 100;
+    const nLong_inf = Math.max(3, Math.round(width / sep_inf));
+    const nLong_sup = Math.max(3, Math.round(width / sep_sup));
 
-    // Longitudinal INF
-    for(let i=0;i<nLong_inf;i++){
-        const z=-width/2+(i+0.5)*width/nLong_inf;
-        addBar(barsGroup,cx,cx+L_total,y_inf,z,db_inf/2,matInf);
+    // Longitudinal INF — cyan
+    for (let i = 0; i < nLong_inf; i++) {
+        const z = -width / 2 + (i + 0.5) * width / nLong_inf;
+        addBar(barsGroup, cx, cx + L_total, y_inf, z, db_inf / 2, matInf);
     }
-    // Longitudinal SUP
-    for(let i=0;i<nLong_sup;i++){
-        const z=-width/2+(i+0.5)*width/nLong_sup;
-        addBar(barsGroup,cx,cx+L_total,y_sup,z,db_sup/2,matSup);
+    // Longitudinal SUP — electric orange
+    for (let i = 0; i < nLong_sup; i++) {
+        const z = -width / 2 + (i + 0.5) * width / nLong_sup;
+        addBar(barsGroup, cx, cx + L_total, y_sup, z, db_sup / 2, matSup);
     }
-    // Grafil INF (interleaved z)
-    if(db_gi>0){
-        const nGI=Math.max(2,Math.round(width/(sep_inf*0.5)));
-        for(let i=0;i<nGI;i++){
-            const z=-width/2+(i+0.5)*width/nGI+width/(nGI*2);
-            if(Math.abs(z)<width/2) addBar(barsGroup,cx,cx+L_total,y_inf,z,db_gi/2,matGrf);
+    // Grafil INF — magenta
+    if (db_gi > 0) {
+        const nGI = Math.max(2, Math.round(width / (sep_inf * 0.5)));
+        for (let i = 0; i < nGI; i++) {
+            const z = -width / 2 + (i + 0.5) * width / nGI + width / (nGI * 2);
+            if (Math.abs(z) < width / 2) addBar(barsGroup, cx, cx + L_total, y_inf, z, db_gi / 2, matGrf);
         }
     }
-    // Grafil SUP
-    if(db_gs>0){
-        const nGS=Math.max(2,Math.round(width/(sep_sup*0.5)));
-        for(let i=0;i<nGS;i++){
-            const z=-width/2+(i+0.5)*width/nGS+width/(nGS*2);
-            if(Math.abs(z)<width/2) addBar(barsGroup,cx,cx+L_total,y_sup,z,db_gs/2,matGrf);
+    // Grafil SUP — magenta
+    if (db_gs > 0) {
+        const nGS = Math.max(2, Math.round(width / (sep_sup * 0.5)));
+        for (let i = 0; i < nGS; i++) {
+            const z = -width / 2 + (i + 0.5) * width / nGS + width / (nGS * 2);
+            if (Math.abs(z) < width / 2) addBar(barsGroup, cx, cx + L_total, y_sup, z, db_gs / 2, matGrf);
         }
     }
-    // Transverse bars (stirrups / ties)
-    const nT=Math.min(80,Math.round(L_total/0.15));
-    const matT_inf=matInf.clone(); matT_inf.transparent=true; matT_inf.opacity=0.45;
-    const matT_sup=matSup.clone(); matT_sup.transparent=true; matT_sup.opacity=0.45;
-    for(let i=0;i<nT;i++){
-        const x=cx+(i+0.5)*L_total/nT;
-        addTransBar(barsGroup,x,-width/2,width/2,y_inf,db_inf/2*0.6,matT_inf);
-        addTransBar(barsGroup,x,-width/2,width/2,y_sup,db_sup/2*0.6,matT_sup);
+    // Transverse bars — bluish white, semi-transparent
+    const nT = Math.min(80, Math.round(L_total / 0.15));
+    const matT_inf = matTrans.clone();
+    matT_inf.transparent = true; matT_inf.opacity = 0.55;
+    const matT_sup = matTrans.clone();
+    matT_sup.transparent = true; matT_sup.opacity = 0.55;
+    for (let i = 0; i < nT; i++) {
+        const x = cx + (i + 0.5) * L_total / nT;
+        addTransBar(barsGroup, x, -width / 2, width / 2, y_inf, db_inf / 2 * 0.6, matT_inf);
+        addTransBar(barsGroup, x, -width / 2, width / 2, y_sup, db_sup / 2 * 0.6, matT_sup);
     }
 
     scene3D.add(barsGroup);
 
+    /* ── Text labels (cyberpunk sprites) ── */
+    buildTextLabels(R, cx, L_total, h_m);
+
     /* ── DEFORMED SHAPE — escala adaptativa ── */
-    if(showDeformed && R.delta_LP_x && R.delta_LP_x.length>0) {
+    if (showDeformed && R.delta_LP_x && R.delta_LP_x.length > 0) {
         buildDeformed(R, cx, h_m, width, L_total);
     }
 
     /* Camera distance */
-    spherical.radius = Math.max(8, L_total*1.7+h_m*2);
+    spherical.radius = Math.max(8, L_total * 1.7 + h_m * 2);
     updateCamPos();
+}
+
+/* ── Text Labels as Sprites ── */
+function buildTextLabels(R, cx, L_total, h_m) {
+    const labels = [];
+    // Span labels
+    let cumX = 0;
+    R.L_list.forEach((L, idx) => {
+        const midX = cumX + L / 2;
+        labels.push({
+            text: `VANO ${idx + 1}`,
+            x: cx + midX,
+            y: h_m + 0.35,
+            z: 0,
+            color: '#00e5ff',
+        });
+        labels.push({
+            text: `${L.toFixed(2)} m`,
+            x: cx + midX,
+            y: h_m + 0.15,
+            z: 0,
+            color: '#8899bb',
+        });
+        cumX += L;
+    });
+
+    // Support labels
+    let supX = 0;
+    for (let i = 0; i <= R.L_list.length; i++) {
+        labels.push({
+            text: `AP${i + 1}`,
+            x: cx + supX,
+            y: -0.45,
+            z: 0,
+            color: '#ff44aa',
+        });
+        if (i < R.L_list.length) supX += R.L_list[i];
+    }
+
+    labels.forEach(l => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+
+        // Set font first for accurate text measurement
+        ctx.font = 'bold 22px "JetBrains Mono", monospace';
+        const tw = ctx.measureText(l.text).width || 100;
+
+        // Semi-transparent dark background
+        ctx.fillStyle = 'rgba(3, 3, 8, 0.7)';
+        roundRect(ctx, 128 - tw / 2 - 14, 8, tw + 28, 40, 4);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = l.color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = l.color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(l.text, 128, 30);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+
+        const spriteMat = new THREE.SpriteMaterial({
+            map: tex,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.NormalBlending,
+        });
+        const sprite = new THREE.Sprite(spriteMat);
+        sprite.position.set(l.x, l.y, l.z);
+        sprite.scale.set(2.5, 0.625, 1);
+        sprite.userData.slab = true;
+        scene3D.add(sprite);
+    });
+}
+
+/* Helper: rounded rect for canvas */
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
 }
 
 function buildDeformed(R, cx, h_m, width, L_total) {
@@ -787,13 +1213,13 @@ function buildDeformed(R, cx, h_m, width, L_total) {
     const geo=new THREE.BufferGeometry();
     geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
     geo.computeVertexNormals();
-    const mat=new THREE.MeshBasicMaterial({color:0xA78BFA,transparent:true,opacity:0.5,side:THREE.DoubleSide,depthWrite:false});
+    const mat=new THREE.MeshBasicMaterial({color:'#00e5ff',transparent:true,opacity:0.35,side:THREE.DoubleSide,depthWrite:false});
     deformGroup.add(new THREE.Mesh(geo,mat));
 
-    // Also draw a center line for clarity
+    // Also draw a center line for clarity (magenta glow)
     const linePts=x_pts.map((x,i)=>new THREE.Vector3(cx+x, h_m+(d_pts[i]||0)*scale+0.006, 0));
     const lineGeo=new THREE.BufferGeometry().setFromPoints(linePts);
-    deformGroup.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({color:0xC4B5FD,linewidth:2})));
+    deformGroup.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({color:'#ff44aa',linewidth:2})));
 
     scene3D.add(deformGroup);
 }
@@ -802,14 +1228,14 @@ function buildDeformed(R, cx, h_m, width, L_total) {
    HEATMAP (vertex colors)
    ═══════════════════════════════════════════════════════ */
 
-/* Rampa Azul → Verde → Amarillo → Rojo (t en [0,1]) */
+/* Rampa Cian → Verde → Amarillo → Magenta (t en [0,1]) */
 function heatColor(t) {
     t = Math.max(0, Math.min(1, t));
     const stops = [
-        [0.00, 0x3B, 0x82, 0xF6],   // #3B82F6 azul
+        [0.00, 0x00, 0xE5, 0xFF],   // #00E5FF cian
         [0.33, 0x10, 0xB9, 0x81],   // #10B981 verde
         [0.66, 0xF5, 0x9E, 0x0B],   // #F59E0B amarillo
-        [1.00, 0xE0, 0x30, 0x30],   // #E03030 rojo
+        [1.00, 0xFF, 0x44, 0xAA],   // #FF44AA magenta
     ];
     for (let i = 0; i < stops.length - 1; i++) {
         const a = stops[i], b = stops[i+1];

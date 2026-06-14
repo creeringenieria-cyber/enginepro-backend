@@ -1,0 +1,363 @@
+"""
+FastAPI backend — EnginePro Losas Web · CRÉER Ingeniería
+Núcleo de cálculo NSR-10: cálculo, optimización económica y registro de
+descargas con email. La memoria (preview HTML + Word .docx) se genera 100%
+en el navegador (js/memoria.js), igual que DESPIECE Studio — el backend ya
+no toca matplotlib ni python-docx, por lo que es liviano y rápido en Render.
+"""
+import os
+import re
+import datetime
+import logging
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
+from .motor import (
+    calcular_losa, resultado_a_dict,
+    MALLAS, GRAFILES, CASETONES, VERSION, EMPRESA,
+    MotorEstructural, ResultadosLosa
+)
+from .optimizador import (
+    optimizar_losa,
+    PRECIO_CONCRETO_M3_DEFAULT,
+    PRECIO_ACERO_KG_DEFAULT,
+    EXTRA_CM_DEFAULT,
+)
+
+app = FastAPI(title="EnginePro Losas · CRÉER Ingeniería", version=VERSION)
+
+# ── CORS ──
+# NOTA: allow_credentials=True con allow_origins=["*"] es inválido por spec CORS
+# y starlette moderno tira ValueError al arrancar. Se elimina allow_credentials.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+
+ADMIN_EMAIL = "info@creeringenieria.com"
+
+# ── Logger ──
+# En Render el filesystem es efímero: el email.log se pierde en cada reinicio.
+# Se conserva el FileHandler para debug local; en producción solo el StreamHandler importa.
+_log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_email_logger = logging.getLogger("enginepro.email")
+_email_logger.setLevel(logging.DEBUG)
+_fh = logging.FileHandler(os.path.join(_log_dir, "email.log"), encoding="utf-8")
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_email_logger.addHandler(_fh)
+_sh = logging.StreamHandler()
+_sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_email_logger.addHandler(_sh)
+
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+# ── Models ──
+class DatosEntrada(BaseModel):
+    tipo_losa: str = "Maciza"
+    luces: List[float] = Field(default=[4.0])
+    h: float = 15.0
+    fc: float = 21.0
+    fy: float = 420.0
+    cv: float = 180.0
+    cm_adic: float = 150.0
+    malla_sup: str = "M-084 (Ø4.0 c/15)"
+    grafil_sup: str = "Sin Grafil"
+    malla_inf: str = "M-131 (Ø5.0 c/15)"
+    grafil_inf: str = "Sin Grafil"
+    b_nervio: Optional[float] = 10.0
+    s_nervio: Optional[float] = 70.0
+    h_loseta: Optional[float] = 5.0
+    nombre_caseton: Optional[str] = ""
+    peso_caseton: Optional[float] = 0.5
+
+
+class DatosProyecto(BaseModel):
+    nombre: str = EMPRESA
+    matricula: str = "Profesional Especializado"
+    proyecto: str = "Proyecto Estructural"
+    ubicacion: str = "Colombia"
+    fecha: str = ""
+
+
+class OptimizarRequest(BaseModel):
+    """
+    Entrada del optimizador. h, malla_sup, malla_inf, grafil_* NO se usan
+    (los fija el optimizador). Los demás campos definen el problema.
+    """
+    luces: List[float] = Field(default=[4.0])
+    fc: float = 21.0
+    fy: float = 420.0
+    cv: float = 180.0
+    cm_adic: float = 150.0
+    precio_concreto_m3: float = PRECIO_CONCRETO_M3_DEFAULT
+    precio_acero_kg: float = PRECIO_ACERO_KG_DEFAULT
+    extra_cm: int = EXTRA_CM_DEFAULT
+    historial_completo: bool = False
+
+
+class RegistroDescarga(BaseModel):
+    nombre: str
+    empresa: str
+    correo: str
+    pais: str = "Colombia"
+    proyecto: str = ""
+    matricula: str = ""
+    entrada: DatosEntrada
+
+
+def _sanitize_html(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+# ── Email con Resend ──
+def enviar_email_registro(reg: RegistroDescarga):
+    import resend
+
+    if not reg.nombre or not reg.nombre.strip():
+        _email_logger.warning("Registro rechazado: nombre vacio"); return
+    if not reg.correo or not _EMAIL_RE.match(reg.correo.strip()):
+        _email_logger.warning(f"Registro rechazado: correo invalido '{reg.correo}'"); return
+    if not reg.empresa or not reg.empresa.strip():
+        _email_logger.warning("Registro rechazado: empresa vacia"); return
+
+    RESEND_KEY = os.getenv("RESEND_API_KEY", "")
+    if not RESEND_KEY:
+        _email_logger.warning("RESEND_API_KEY no configurado — registro NO enviado."); return
+
+    resend.api_key = RESEND_KEY
+
+    try:
+        fecha_hora  = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        luces_str   = " + ".join([f"{L:.2f}m" for L in reg.entrada.luces])
+        s_nombre    = _sanitize_html(reg.nombre.strip())
+        s_empresa   = _sanitize_html(reg.empresa.strip())
+        s_correo    = _sanitize_html(reg.correo.strip())
+        s_pais      = _sanitize_html(reg.pais.strip() if reg.pais else "-")
+        s_proyecto  = _sanitize_html(reg.proyecto.strip()) if reg.proyecto else "-"
+        s_matricula = _sanitize_html(reg.matricula.strip()) if reg.matricula else "-"
+
+        html_admin = f"""<html><body style="font-family:Arial,sans-serif;background:#f4f4f8;padding:20px">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+    <div style="background:#1A1A2E;padding:20px 28px;border-bottom:4px solid #E03030">
+        <h2 style="color:#fff;margin:0;font-size:1.2rem">EnginePro Losas - Nueva Descarga</h2>
+        <p style="color:#8A90A8;margin:4px 0 0;font-size:0.85rem">{fecha_hora}</p>
+    </div>
+    <div style="padding:24px 28px">
+        <table style="width:100%;border-collapse:collapse;font-size:0.92rem">
+            <tr><td style="color:#555;padding:6px 0;width:140px"><b>Nombre:</b></td><td style="color:#1A1A2E">{s_nombre}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Empresa:</b></td><td style="color:#1A1A2E">{s_empresa}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Correo:</b></td><td><a href="mailto:{reg.correo.strip()}" style="color:#E03030">{s_correo}</a></td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Pais:</b></td><td style="color:#1A1A2E">{s_pais}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Proyecto:</b></td><td style="color:#1A1A2E">{s_proyecto}</td></tr>
+            <tr><td style="color:#555;padding:6px 0"><b>Matricula:</b></td><td style="color:#1A1A2E">{s_matricula}</td></tr>
+        </table>
+        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+        <h3 style="color:#1A1A2E;font-size:0.95rem;margin:0 0 10px">Parametros calculados</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+            <tr><td style="color:#555;padding:4px 0;width:140px">Luces:</td><td style="font-family:monospace">{luces_str}</td></tr>
+            <tr><td style="color:#555;padding:4px 0">h / f'c / fy:</td><td style="font-family:monospace">{reg.entrada.h} cm / {reg.entrada.fc} MPa / {reg.entrada.fy} MPa</td></tr>
+            <tr><td style="color:#555;padding:4px 0">CV / CM adic:</td><td style="font-family:monospace">{reg.entrada.cv} / {reg.entrada.cm_adic} kgf/m2</td></tr>
+            <tr><td style="color:#555;padding:4px 0">Malla inf / sup:</td><td style="font-family:monospace">{_sanitize_html(reg.entrada.malla_inf)} / {_sanitize_html(reg.entrada.malla_sup)}</td></tr>
+        </table>
+    </div>
+    <div style="background:#f8f9fc;padding:12px 28px;font-size:0.78rem;color:#999">
+        EnginePro Losas v{VERSION} - CREER Ingenieria - creeringenieria.com
+    </div>
+</div>
+</body></html>"""
+
+        resend.Emails.send({
+            "from": "EnginePro Losas <info@creeringenieria.com>",
+            "to": [ADMIN_EMAIL],
+            "subject": f"[EnginePro] Nueva descarga - {s_nombre} - {fecha_hora}",
+            "html": html_admin,
+        })
+        _email_logger.info(f"OK Resend — {reg.correo.strip()} — {s_nombre}")
+
+    except Exception as e:
+        _email_logger.error(f"Resend ERROR: {type(e).__name__}: {e}")
+
+
+# ── Health check — UptimeRobot debe pingar ESTE endpoint, no "/" ──
+# Es liviano (solo JSON), no sirve archivos estáticos ni carga matplotlib.
+# Configurar en UptimeRobot como: https://enginepro-backend.onrender.com/health
+@app.get("/health")
+@app.head("/health")
+def health_check():
+    return {"status": "ok", "version": VERSION, "empresa": EMPRESA}
+
+
+# ── Catalogos ──
+@app.get("/api/catalogos")
+def get_catalogos():
+    return {
+        "mallas": list(MALLAS.keys()),
+        "grafiles": list(GRAFILES.keys()),
+        "version": VERSION,
+        "empresa": EMPRESA,
+    }
+
+
+# ── Calculo ──
+@app.post("/api/calcular")
+def api_calcular(datos: DatosEntrada):
+    try:
+        entrada = datos.model_dump()
+        entrada["tipo_losa"] = "Maciza"
+        R = calcular_losa(entrada)
+        return resultado_a_dict(R)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Optimización económica ──
+@app.post("/api/optimizar")
+def api_optimizar(req: OptimizarRequest):
+    try:
+        entrada_base = {
+            "tipo_losa": "Maciza",
+            "luces": req.luces,
+            "h": 0.0,          # sobreescrito por el optimizador
+            "fc": req.fc,
+            "fy": req.fy,
+            "cv": req.cv,
+            "cm_adic": req.cm_adic,
+            "malla_sup": "",
+            "grafil_sup": "Sin Grafil",
+            "malla_inf": "",
+            "grafil_inf": "Sin Grafil",
+        }
+        opt = optimizar_losa(
+            entrada_base,
+            precio_concreto_m3=req.precio_concreto_m3,
+            precio_acero_kg=req.precio_acero_kg,
+            extra_cm=req.extra_cm,
+            historial_completo=req.historial_completo,
+        )
+        if not opt.get("ok"):
+            return opt
+
+        # Cálculo final completo con el diseño óptimo para alimentar UI/3D.
+        R = calcular_losa(opt["entrada_final"])
+        resultado = resultado_a_dict(R)
+        resultado["optimizacion"] = {
+            "mejor": opt["mejor"],
+            "h_min_nsr": opt["h_min_nsr"],
+            "h_range": opt["h_range"],
+            "explorados": opt["explorados"],
+            "historial": opt["historial"],
+            "precios": opt["precios"],
+            "area_losa_m2": opt["area_losa_m2"],
+        }
+        return resultado
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Registro descarga + email ──
+@app.post("/api/registrar_descarga")
+async def api_registrar(reg: RegistroDescarga, background: BackgroundTasks):
+    try:
+        background.add_task(enviar_email_registro, reg)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Frontend ──
+_css_dir = os.path.join(FRONTEND_DIR, "css")
+_js_dir  = os.path.join(FRONTEND_DIR, "js")
+if os.path.isdir(_css_dir):
+    app.mount("/css", StaticFiles(directory=_css_dir), name="css")
+if os.path.isdir(_js_dir):
+    app.mount("/js",  StaticFiles(directory=_js_dir),  name="js")
+_img_dir = os.path.join(FRONTEND_DIR, "images")
+if os.path.isdir(_img_dir):
+    app.mount("/images", StaticFiles(directory=_img_dir), name="images")
+
+
+def _find_logo():
+    names = ["logo_creer_V3.png", "logo_creer_V2.png", "logo-creer-v2.png"]
+    dirs  = [
+        FRONTEND_DIR,
+        os.path.join(FRONTEND_DIR, "images"),
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    ]
+    for d in dirs:
+        for n in names:
+            p = os.path.join(d, n)
+            if os.path.exists(p):
+                return p
+    return None
+
+
+@app.get("/images/logo-creer-v2.png")
+@app.get("/logo_creer_V2.png")
+@app.get("/logo_creer_V3.png")
+def get_logo():
+    p = _find_logo()
+    if p:
+        return FileResponse(p, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Logo not found")
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    fav = os.path.join(FRONTEND_DIR, "favicon.ico")
+    if os.path.exists(fav):
+        return FileResponse(fav, media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="favicon not found")
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    content = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /css/\n"
+        "Allow: /js/\n"
+        "Allow: /images/\n"
+        "Disallow: /api/\n"
+        "Sitemap: https://creeringenieria.com/sitemap.xml\n"
+    )
+    return HTMLResponse(content=content, media_type="text/plain")
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://creeringenieria.com/herramientas/losas/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+</urlset>"""
+    return HTMLResponse(content=xml, media_type="application/xml")
+
+
+# ── Ruta raíz — acepta GET y HEAD ──
+# HEAD es el método que usan UptimeRobot y otros monitores.
+# Sin esto responde 405 y el monitor cree que la app está caída.
+@app.api_route("/", methods=["GET", "HEAD"])
+def index():
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"app": "EnginePro Losas API", "version": VERSION, "empresa": EMPRESA,
+            "status": "ok", "docs": "/docs"}

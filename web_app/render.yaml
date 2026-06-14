@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: enginepro-losas-creer
+    runtime: python
+    # El repo se sube con el CONTENIDO de web_app en la raíz (backend/, frontend/,
+    # requirements.txt, start.bat). Mismo comando que el start.bat local.
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # La memoria Word se genera 100% en el navegador → el backend solo manda
+      # el correo de registro vía Resend. Pega tu API key en el dashboard.
+      - key: RESEND_API_KEY
+        sync: false
